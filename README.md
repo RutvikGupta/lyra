@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Listening Web
 
-## Getting Started
+A 3D starfield visualization of your Spotify listening history with a real-time now-playing overlay.
 
-First, run the development server:
+## One-time setup
+
+Add the dev redirect URI to your Spotify app:
+
+1. Open https://developer.spotify.com/dashboard
+2. Click your app → **Edit settings**
+3. Under **Redirect URIs**, add: `http://127.0.0.1:3000/api/auth/callback`
+4. Click **Save**
+
+> Use `127.0.0.1`, not `localhost` — Spotify rejects `localhost` since Nov 2025.
+
+## Run
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://127.0.0.1:3000 and click **Connect Spotify**. After approving the scopes, play something on Spotify — the now-playing panel polls every 5 seconds.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Phases
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- ✅ **Phase 1** — PKCE auth + now-playing widget
+- ⏳ **Phase 2** — Upload extended streaming history ZIP, parse, dedupe to unique tracks/artists
+- ⏳ **Phase 3** — Per-artist genre enrichment via Spotify Web API + Last.fm `artist.getSimilar` for cross-genre edges
+- ⏳ **Phase 4** — 3D force graph (`react-force-graph-3d`), precomputed layout, hover/click for track info
+- ⏳ **Phase 5** — Wire now-playing into the graph: pulse the current node, trace recent listening session
+- ⏳ **Phase 6** — Polish: filters, search, share links
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Spotify Web API in 2026**: `audio-features`, `recommendations`, `related-artists`, batch `GET /tracks?ids=`, and editorial playlist endpoints are gone for new apps. Genre data comes from `GET /artists/{id}.genres` only — no batch — with aggressive caching.
+- **Dev mode**: capped at 5 users, requires Premium account.
+- **Real-time**: polling `/me/player/currently-playing` every 5s. Spotify has no webhooks for playback.
