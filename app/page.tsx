@@ -54,9 +54,9 @@ export default async function Home({
             Personal · 7 years of plays
           </span>
           <h1 className="text-balance text-5xl font-black leading-[0.95] tracking-tight sm:text-7xl">
-            Your music,{" "}
+            Your playlist,{" "}
             <span className="bg-gradient-to-br from-[var(--brand)] to-emerald-200 bg-clip-text text-transparent">
-              as a galaxy.
+              as a starfield.
             </span>
           </h1>
           <p className="max-w-xl text-base leading-relaxed text-[var(--muted)] sm:text-lg">

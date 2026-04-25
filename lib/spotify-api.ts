@@ -59,9 +59,16 @@ export function fetchProfile() {
 // pull `listeners` and `playcount` from Last.fm `artist.getInfo`.
 
 type ArtistStats = { listeners: number; playcount: number };
+type LibraryEnrichment = {
+  genres: string[];
+  listeners: number;
+  playcount: number;
+};
 
 const genreCache = new Map<string, string[]>();
 const statsCache = new Map<string, ArtistStats>();
+// Name-keyed cache for library data where we don't have Spotify IDs.
+const lastfmDataCache = new Map<string, LibraryEnrichment>();
 
 async function fetchLastfmTags(artistName: string): Promise<string[]> {
   const key = process.env.LASTFM_API_KEY;
@@ -148,6 +155,30 @@ export async function fetchArtistStats(
     : { listeners: 0, playcount: 0 };
   statsCache.set(artistId, stats);
   return stats;
+}
+
+// Library variant: caches by lowercase name (no Spotify ID available for
+// uploaded-history artists). Skips Spotify entirely — library has thousands
+// of artists, hitting /artists/{id} 50× per page is wasteful when we know
+// it returns empty arrays anyway.
+export async function fetchLastfmArtistData(
+  artistName: string,
+): Promise<LibraryEnrichment> {
+  const key = artistName.toLowerCase();
+  const cached = lastfmDataCache.get(key);
+  if (cached) return cached;
+
+  const [genres, stats] = await Promise.all([
+    fetchLastfmTags(artistName),
+    fetchLastfmStats(artistName),
+  ]);
+  const result = {
+    genres,
+    listeners: stats.listeners,
+    playcount: stats.playcount,
+  };
+  lastfmDataCache.set(key, result);
+  return result;
 }
 
 export async function enrichArtists(

@@ -27,6 +27,7 @@ export type GraphLink = {
   source: string;
   target: string;
   shared: number;
+  sharedGenres: string[];
 };
 
 const PALETTE = [
@@ -101,10 +102,17 @@ export function buildArtistGraph(artists: ArtistInput[]): {
     const aGenres = new Set(safe[i].genres);
     if (aGenres.size === 0) continue;
     for (let j = i + 1; j < safe.length; j++) {
-      let shared = 0;
-      for (const g of safe[j].genres) if (aGenres.has(g)) shared++;
-      if (shared >= MIN_SHARED) {
-        links.push({ source: safe[i].id, target: safe[j].id, shared });
+      const sharedGenres: string[] = [];
+      for (const g of safe[j].genres) {
+        if (aGenres.has(g)) sharedGenres.push(g);
+      }
+      if (sharedGenres.length >= MIN_SHARED) {
+        links.push({
+          source: safe[i].id,
+          target: safe[j].id,
+          shared: sharedGenres.length,
+          sharedGenres,
+        });
       }
     }
   }

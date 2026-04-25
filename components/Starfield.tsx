@@ -3,7 +3,13 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import {
+  aggregateTopArtists,
+  aggregateTopArtistsFromPlays,
+} from "@/lib/aggregate";
 import { buildArtistGraph, type GraphLink, type GraphNode } from "@/lib/graph";
+import { loadHistory } from "@/lib/storage";
+import type { Criteria } from "./CriteriaBar";
 
 const ForceGraph3D = dynamic(
   () => import("react-force-graph-3d").then((m) => m.default),
@@ -13,14 +19,6 @@ const ForceGraph3D = dynamic(
   },
 );
 
-type TimeRange = "short_term" | "medium_term" | "long_term";
-
-const RANGE_LABELS: Record<TimeRange, string> = {
-  short_term: "Last 4 weeks",
-  medium_term: "Last 6 months",
-  long_term: "All time",
-};
-
 type CurrentTrack = {
   name: string;
   artists: { name: string; id: string }[];
@@ -29,12 +27,11 @@ type CurrentTrack = {
 
 const NOW_PLAYING_POLL_MS = 2000;
 
-export default function Starfield() {
+export default function Starfield({ criteria }: { criteria: Criteria }) {
   const [graph, setGraph] = useState<{
     nodes: GraphNode[];
     links: GraphLink[];
   } | null>(null);
-  const [timeRange, setTimeRange] = useState<TimeRange>("long_term");
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
@@ -44,30 +41,77 @@ export default function Starfield() {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [currentTrack, setCurrentTrack] = useState<CurrentTrack | null>(null);
 
+  // Stringify the criteria for the dep array — primitive comparison.
+  const criteriaKey = JSON.stringify(criteria);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setGraph(null);
       setError(null);
       try {
-        const r = await fetch(
-          `/api/top?type=artists&time_range=${timeRange}`,
-          { cache: "no-store" },
-        );
-        if (r.status === 401) {
-          if (!cancelled)
+        let items: unknown[] = [];
+
+        if (criteria.kind === "api") {
+          const r = await fetch(
+            `/api/top?type=artists&time_range=${criteria.timeRange}`,
+            { cache: "no-store" },
+          );
+          if (r.status === 401) {
+            if (!cancelled)
+              setError(
+                "Connect Spotify on the home page to load your top artists.",
+              );
+            return;
+          }
+          if (!r.ok) {
+            if (!cancelled) setError(`Failed (${r.status})`);
+            return;
+          }
+          const data = await r.json();
+          if (cancelled) return;
+          items = data.items ?? [];
+        } else {
+          const history = await loadHistory();
+          if (cancelled) return;
+          if (!history || history.plays.length === 0) {
             setError(
-              "Connect Spotify on the home page to load your top artists.",
+              "No uploaded history found. Drop your Spotify ZIP on the upload page first.",
             );
-          return;
+            return;
+          }
+          const top =
+            criteria.year === "all" && criteria.sortBy === "msPlayed"
+              ? aggregateTopArtists(history.artists, criteria.limit)
+              : aggregateTopArtistsFromPlays(history.plays, {
+                  year: criteria.year,
+                  sortBy: criteria.sortBy,
+                  limit: criteria.limit,
+                });
+          if (top.length === 0) {
+            setError(
+              `No plays found${criteria.year !== "all" ? ` in ${criteria.year}` : ""}.`,
+            );
+            return;
+          }
+          const r = await fetch("/api/library-artists", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ artists: top }),
+            cache: "no-store",
+          });
+          if (!r.ok) {
+            if (!cancelled) setError(`Library enrichment failed (${r.status})`);
+            return;
+          }
+          const data = await r.json();
+          if (cancelled) return;
+          items = data.items ?? [];
         }
-        if (!r.ok) {
-          if (!cancelled) setError(`Failed (${r.status})`);
-          return;
-        }
-        const data = await r.json();
-        if (cancelled) return;
-        const g = buildArtistGraph(data.items ?? []);
+
+        const g = buildArtistGraph(
+          items as Parameters<typeof buildArtistGraph>[0],
+        );
         setGraph(g);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -77,7 +121,8 @@ export default function Starfield() {
     return () => {
       cancelled = true;
     };
-  }, [timeRange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [criteriaKey]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -146,15 +191,86 @@ export default function Starfield() {
     };
   }, []);
 
-  const currentArtistIds = useMemo(
-    () => new Set(currentTrack?.artists.map((a) => a.id).filter(Boolean) ?? []),
-    [currentTrack],
-  );
+  // Match the current track against the graph. API mode uses Spotify IDs;
+  // library mode uses synthetic `lib:{lowercase_name}` IDs. We populate both
+  // forms so a single node lookup works for either source.
+  const currentArtistIds = useMemo(() => {
+    const keys = new Set<string>();
+    for (const a of currentTrack?.artists ?? []) {
+      if (a.id) keys.add(a.id);
+      if (a.name) keys.add(`lib:${a.name.toLowerCase()}`);
+    }
+    return keys;
+  }, [currentTrack]);
 
   const matchedNode = useMemo(
     () => graph?.nodes.find((n) => currentArtistIds.has(n.id)) ?? null,
     [graph, currentArtistIds],
   );
+
+  // react-force-graph-3d caches node materials/geometry per node and only
+  // re-evaluates color/size callbacks on refresh. Force one whenever the
+  // current artist set changes so the highlight actually paints.
+  useEffect(() => {
+    graphRef.current?.refresh?.();
+  }, [currentArtistIds, matchedNode]);
+
+  // Pulsing halo around the now-playing node. We add a separate THREE mesh
+  // to the scene and animate its scale + opacity in the existing render
+  // loop via requestAnimationFrame — no React re-renders, smooth at 60fps.
+  useEffect(() => {
+    if (!graph || !matchedNode) return;
+    const scene = graphRef.current?.scene?.();
+    if (!scene) return;
+
+    const haloRadius = matchedNode.size * 1.6;
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(haloRadius, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x1ed760,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.BackSide,
+        depthWrite: false,
+      }),
+    );
+    halo.name = "now-playing-halo";
+    halo.raycast = () => {};
+    scene.add(halo);
+
+    let rafId = 0;
+    let cancelled = false;
+    const animate = () => {
+      if (cancelled) return;
+      const t = Date.now() / 350;
+      const scale = 1.1 + 0.35 * Math.sin(t);
+      halo.scale.setScalar(scale);
+      const mat = halo.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.18 + 0.22 * (0.5 + 0.5 * Math.sin(t));
+      // Track the live node position — the force layout keeps mutating
+      // x/y/z on the same node reference.
+      const positioned = matchedNode as GraphNode & {
+        x?: number;
+        y?: number;
+        z?: number;
+      };
+      halo.position.set(
+        positioned.x ?? 0,
+        positioned.y ?? 0,
+        positioned.z ?? 0,
+      );
+      rafId = requestAnimationFrame(animate);
+    };
+    animate();
+
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      scene.remove(halo);
+      halo.geometry.dispose();
+      (halo.material as THREE.Material).dispose();
+    };
+  }, [graph, matchedNode]);
 
   // Re-bind controls whenever a fresh graph mounts: left-drag pans the view,
   // right-drag rotates, scroll zooms. Native trackball-style "rotate on left"
@@ -213,23 +329,8 @@ export default function Starfield() {
       // instead of popping a menu.
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* Time range tabs — z-50 + pointer-events-auto so clicks land here, not the WebGL canvas underneath */}
-      <div className="pointer-events-auto absolute left-1/2 top-6 z-50 flex -translate-x-1/2 gap-1 rounded-full border border-white/10 bg-black/70 p-1 backdrop-blur-md">
-        {(Object.keys(RANGE_LABELS) as TimeRange[]).map((r) => (
-          <button
-            key={r}
-            type="button"
-            onClick={() => setTimeRange(r)}
-            className={`relative z-50 cursor-pointer rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-              timeRange === r
-                ? "bg-white text-black"
-                : "text-[var(--muted)] hover:bg-white/10 hover:text-white"
-            }`}
-          >
-            {RANGE_LABELS[r]}
-          </button>
-        ))}
-      </div>
+      {/* Criteria UI lives in the parent (ExploreView) so that the
+          starfield component is purely a renderer. */}
 
       {error && (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -254,13 +355,18 @@ export default function Starfield() {
           nodeLabel={(n: object) => (n as GraphNode).name}
           nodeColor={(n: object) => {
             const node = n as GraphNode;
-            return currentArtistIds.has(node.id) ? "#ffffff" : node.color;
+            return currentArtistIds.has(node.id)
+              ? "#1ed760" // brand green for the now-playing artist
+              : node.color;
           }}
           nodeVal={(n: object) => {
             const node = n as GraphNode;
-            return currentArtistIds.has(node.id) ? node.size * 2.5 : node.size;
+            return currentArtistIds.has(node.id) ? node.size * 4 : node.size;
           }}
           nodeOpacity={0.95}
+          // Bump sphere segment count from default 8 → 24 for visibly smoother
+          // nodes (still ~negligible perf hit at <500 nodes).
+          nodeResolution={24}
           linkColor={(l: object) => {
             // After force layout source/target become full node refs.
             const link = l as { source: GraphNode | string };
@@ -273,6 +379,32 @@ export default function Starfield() {
             const shared = (l as GraphLink).shared;
             // shared=1 → 0.6, shared=3 → 1.6, shared=5+ → cap at 3
             return Math.min(3, 0.4 + shared * 0.5);
+          }}
+          linkLabel={(l: object) => {
+            const link = l as Omit<GraphLink, "source" | "target"> & {
+              source: GraphNode | string;
+              target: GraphNode | string;
+            };
+            const a =
+              typeof link.source === "object"
+                ? (link.source as GraphNode).name
+                : link.source;
+            const b =
+              typeof link.target === "object"
+                ? (link.target as GraphNode).name
+                : link.target;
+            const tags = link.sharedGenres
+              .slice(0, 4)
+              .map(
+                (g) =>
+                  `<span style="background:rgba(30,215,96,0.18);color:#1ed760;padding:1px 6px;border-radius:6px;margin:0 2px;font-size:10px">${g}</span>`,
+              )
+              .join("");
+            const more =
+              link.sharedGenres.length > 4
+                ? ` +${link.sharedGenres.length - 4} more`
+                : "";
+            return `<div style="font-family:system-ui,sans-serif;color:#fff;padding:4px 2px"><div style="opacity:0.7;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px">${a} ↔ ${b}</div><div>${tags}${more}</div></div>`;
           }}
           enableNodeDrag={false}
           onNodeHover={(n: object | null) =>
@@ -506,7 +638,11 @@ function NodeDetails({
       )}
       <div className="mt-3 flex items-center justify-between gap-2">
         <a
-          href={`https://open.spotify.com/artist/${node.id}`}
+          href={
+            node.id.startsWith("lib:")
+              ? `https://open.spotify.com/search/${encodeURIComponent(node.name)}`
+              : `https://open.spotify.com/artist/${node.id}`
+          }
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--brand)] px-3 py-1.5 text-[11px] font-bold text-black transition-colors hover:bg-[var(--brand-hover)]"

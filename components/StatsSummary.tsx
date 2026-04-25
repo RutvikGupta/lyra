@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { Artist, StoredHistory, Track } from "@/lib/types";
 
 export default function StatsSummary({
@@ -45,6 +46,34 @@ export default function StatsSummary({
           Clear & re-upload
         </button>
       </div>
+
+      {/* Big CTA: open your library as a 3D starfield */}
+      <Link
+        href="/library"
+        className="group relative flex items-center justify-between gap-4 overflow-hidden rounded-2xl border border-[var(--brand)]/30 bg-gradient-to-br from-[var(--brand)]/[0.12] via-[var(--surface-elevated)] to-[var(--surface)] p-5 transition-all hover:border-[var(--brand)]/60 hover:shadow-[0_0_40px_-10px_rgba(30,215,96,0.4)]"
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-16 -top-16 h-52 w-52 rounded-full bg-[var(--brand)]/30 blur-3xl"
+        />
+        <div className="relative max-w-md">
+          <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-[var(--brand)]">
+            Phase 4 · Ready
+          </div>
+          <h3 className="mt-1 text-lg font-bold text-white">
+            See your library as a 3D starfield
+          </h3>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Top 150 artists from your{" "}
+            {history.totalPlays.toLocaleString()} plays, linked by shared genre,
+            colored by cluster, with the artist you&apos;re currently playing
+            highlighted live.
+          </p>
+        </div>
+        <span className="relative inline-flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-bold text-black transition-transform group-hover:scale-[1.04] group-active:scale-[0.99]">
+          Open starfield →
+        </span>
+      </Link>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total plays" value={history.totalPlays.toLocaleString()} />
