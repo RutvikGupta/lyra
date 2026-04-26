@@ -53,17 +53,18 @@ export async function GET() {
     if (data) {
       return Response.json(shape(data as Raw, "personal", true));
     }
-    // See note in /api/now-playing — surface a 503 instead of silently
-    // serving showcase data to a signed-in user during token propagation.
-    return Response.json(
-      {
+    // See note in /api/now-playing for the two cases. Same handling:
+    // re-check auth → fall through to showcase if the cookie was just
+    // cleared; return 200 with an empty list if still authed (transient).
+    const stillAuthed = await hasAuthSession();
+    if (stillAuthed) {
+      return Response.json({
         authenticated: true,
         source: "personal",
         items: [],
-        retrying: true,
-      },
-      { status: 503 },
-    );
+      });
+    }
+    // Cookie cleared → flow into the showcase branch below.
   }
 
   if (!showcaseConfigured()) {

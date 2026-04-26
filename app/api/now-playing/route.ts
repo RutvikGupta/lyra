@@ -71,19 +71,24 @@ export async function GET() {
       const data = (await res.json()) as SpotifyCurrentlyPlaying;
       return Response.json(shape(data, "personal", true));
     }
-    // Authed but Spotify failed (e.g. token still propagating right after
-    // the OAuth redirect). Surface a 503 so the client retries on its
-    // normal poll cadence — falling back to showcase here would silently
-    // show the visitor someone else's track.
-    return Response.json(
-      {
+    // Authed but Spotify failed. Two cases:
+    //   (a) refresh token revoked → getAccessToken cleared the cookie →
+    //       hasAuthSession is now false. Fall through to showcase so the
+    //       visitor sees something instead of an empty card forever.
+    //   (b) genuine transient (post-OAuth lag, Spotify rate-limit on /me).
+    //       Return 200 with isPlaying:false — the client polls every ~2s
+    //       and gets fresh data on the next tick. Returning 503 on a
+    //       polled endpoint floods devtools without any UX upside; the
+    //       "no track playing" state is a natural empty render.
+    const stillAuthed = await hasAuthSession();
+    if (stillAuthed) {
+      return Response.json({
         authenticated: true,
         source: "personal",
         isPlaying: false,
-        retrying: true,
-      },
-      { status: 503 },
-    );
+      });
+    }
+    // Cookie was cleared → flow into the showcase branch below.
   }
 
   // No session. Serve the owner's showcase track so visitors see something
