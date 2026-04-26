@@ -14,6 +14,9 @@ export const SNAPSHOT_VERSION = 1;
 
 export type LibrarySnapshot = {
   version: number;
+  // Optional for backward compat — pre-existing snapshots have no kind.
+  // Treat missing as "library".
+  kind?: "library";
   ownerName: string;
   exportedAt: number; // Date.now() at bake time
   totalPlays: number;
@@ -28,3 +31,35 @@ export type LibrarySnapshot = {
   // export time so visitors don't have to re-enrich.
   artistGenres: Record<string, string[]>;
 };
+
+// Shape of /api/top type=artists response items — mirrored here so
+// ArtistsSnapshot can ship a self-contained payload.
+export type ArtistApiItem = {
+  id: string;
+  rank: number;
+  name: string;
+  genres: string[];
+  image: string | null;
+  popularity: number;
+  listeners: number;
+  playcount: number;
+  uri: string;
+};
+
+// Snapshot for the /explore artist constellation. Captures the exact
+// items as returned by /api/top so the recipient sees the same graph
+// without an OAuth round-trip.
+export type ArtistsSnapshot = {
+  version: number;
+  kind: "artists";
+  ownerName: string;
+  exportedAt: number;
+  timeRange: "short_term" | "medium_term" | "long_term";
+  items: ArtistApiItem[];
+};
+
+export type Snapshot = LibrarySnapshot | ArtistsSnapshot;
+
+export function isArtistsSnapshot(s: Snapshot): s is ArtistsSnapshot {
+  return (s as ArtistsSnapshot).kind === "artists";
+}

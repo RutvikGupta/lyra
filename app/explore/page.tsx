@@ -14,7 +14,7 @@ export default function ExplorePage() {
         </SoftLink>
       </header>
       <ShowcaseOwnerBanner scope="explore" />
-      <ExploreView />
+      <ExploreView share={{ mode: "artists" }} />
     </div>
   );
 }

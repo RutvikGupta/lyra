@@ -3,15 +3,21 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bakeSnapshot } from "@/lib/showcase-library-bake";
+import { SNAPSHOT_VERSION, type ArtistsSnapshot, type Snapshot } from "@/lib/showcase-library";
 import { loadHistory } from "@/lib/storage";
 
-// Anyone-can-share button on /library. Bakes the same LibrarySnapshot
-// shape as the owner's showcase publisher, posts to /api/share/create,
-// returns a short ID, and copies the share URL to the clipboard.
+// Anyone-can-share button. Bakes a Snapshot and posts to /api/share/create,
+// returning a short ID that becomes /share/{id}. Two modes:
 //
-// Hidden when there's no local history — nothing to bake. Visible
-// independently of auth: the snapshot is the user's own browser data,
-// so we don't need a Spotify session to share it.
+//   library  — bakes a LibrarySnapshot from IndexedDB. Falls back to the
+//              owner's published showcase snapshot when there's no local
+//              history (so visitors viewing the showcase fallback can
+//              still share what they're looking at).
+//   artists  — bakes an ArtistsSnapshot from /api/top using the supplied
+//              timeRange. Doesn't need IndexedDB; works for anyone authed
+//              against Spotify.
+
+type Mode = "library" | "artists";
 
 type State =
   | { kind: "idle" }
@@ -20,12 +26,21 @@ type State =
   | { kind: "ok"; url: string }
   | { kind: "error"; message: string };
 
-export default function ShareConstellationButton() {
-  const [hasHistory, setHasHistory] = useState<boolean | null>(null);
+export default function ShareConstellationButton({
+  mode,
+  timeRange,
+}: {
+  mode: Mode;
+  // Required for mode="artists". Ignored for mode="library".
+  timeRange?: "short_term" | "medium_term" | "long_term";
+}) {
+  // For library mode: gates on having local history OR a published
+  // showcase to fall back to. For artists mode: gates on graph-ready —
+  // we ping /api/top once on mount and accept any 200 (item list may be
+  // empty for unauthed users without showcase, in which case the button
+  // hides itself).
+  const [ready, setReady] = useState<boolean | null>(null);
   const [state, setState] = useState<State>({ kind: "idle" });
-  // Toast for the success / error states. Shown as a top-center bar, not
-  // inline under the button — keeps the URL out of the way of the
-  // constellation and gives the user a clear "look here" moment.
   const [toast, setToast] = useState<
     | { kind: "ok"; url: string }
     | { kind: "error"; message: string }
@@ -35,15 +50,39 @@ export default function ShareConstellationButton() {
 
   useEffect(() => {
     let cancelled = false;
-    loadHistory().then((h) => {
-      if (cancelled) return;
-      setHasHistory(!!h && h.plays.length > 0);
-    });
+    async function check() {
+      if (mode === "library") {
+        const h = await loadHistory();
+        if (cancelled) return;
+        if (h && h.plays.length > 0) {
+          setReady(true);
+          return;
+        }
+        // Fall back to published showcase — if it exists, anyone viewing
+        // /library is seeing it and should be able to share it.
+        try {
+          const r = await fetch("/api/showcase/library", {
+            cache: "no-store",
+          });
+          if (cancelled) return;
+          setReady(r.ok);
+        } catch {
+          if (!cancelled) setReady(false);
+        }
+        return;
+      }
+      // artists: always available on /explore. Starfield itself gates
+      // whether anything renders (auth or showcase fallback); if a user
+      // clicks share with nothing on screen, the bake surfaces a clear
+      // toast. Avoids a duplicate /api/top fetch on mount.
+      setReady(true);
+    }
+    check();
     return () => {
       cancelled = true;
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
-  }, []);
+  }, [mode, timeRange]);
 
   function showToast(t: NonNullable<typeof toast>) {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -51,33 +90,22 @@ export default function ShareConstellationButton() {
     toastTimerRef.current = setTimeout(() => setToast(null), 5000);
   }
 
-  if (hasHistory !== true) return null;
+  if (ready !== true) return null;
 
-  async function share() {
-    setState({ kind: "baking" });
+  async function bakeLibrary(): Promise<Snapshot | { error: string }> {
+    const history = await loadHistory();
+    let displayName = "A Lyra listener";
     try {
-      const history = await loadHistory();
-      if (!history) {
-        setState({ kind: "error", message: "No library data loaded" });
-        return;
+      const r = await fetch("/api/profile", { cache: "no-store" });
+      if (r.ok) {
+        const data = await r.json();
+        if (data?.name) displayName = data.name;
       }
+    } catch {
+      // ignore
+    }
 
-      // Pull a label for "ownerName" inside the snapshot — used as the
-      // header on /share/[id]. Best-effort: authed users get their
-      // Spotify display name; unauth'd visitors get a generic label.
-      let displayName = "A Lyra listener";
-      try {
-        const r = await fetch("/api/profile", { cache: "no-store" });
-        if (r.ok) {
-          const data = await r.json();
-          if (data?.name) displayName = data.name;
-        }
-      } catch {
-        // ignore
-      }
-
-      // Enrich the top artists with genres so the shared graph paints
-      // colors immediately on the recipient side, no auth required.
+    if (history && history.plays.length > 0) {
       const topArtistNames = Array.from(
         new Set(history.plays.map((p) => p.artistName)),
       ).slice(0, 250);
@@ -95,28 +123,79 @@ export default function ShareConstellationButton() {
         cache: "no-store",
       });
       if (!enrichRes.ok) {
-        setState({
-          kind: "error",
-          message: `Enrichment failed (${enrichRes.status})`,
-        });
-        return;
+        return { error: `Enrichment failed (${enrichRes.status})` };
       }
       const enrichJson = (await enrichRes.json()) as {
         items: { name: string; genres: string[] }[];
       };
+      return bakeSnapshot(history, displayName, enrichJson.items);
+    }
 
-      const snapshot = bakeSnapshot(history, displayName, enrichJson.items);
+    // No local history — re-share the published showcase snapshot.
+    const sr = await fetch("/api/showcase/library", { cache: "no-store" });
+    if (!sr.ok) {
+      return {
+        error: `No history loaded and no published showcase (${sr.status})`,
+      };
+    }
+    const showcase = (await sr.json()) as Snapshot;
+    return showcase;
+  }
+
+  async function bakeArtists(): Promise<Snapshot | { error: string }> {
+    let displayName = "A Lyra listener";
+    try {
+      const r = await fetch("/api/profile", { cache: "no-store" });
+      if (r.ok) {
+        const data = await r.json();
+        if (data?.name) displayName = data.name;
+      }
+    } catch {
+      // ignore
+    }
+
+    const tr = timeRange ?? "long_term";
+    const r = await fetch(`/api/top?type=artists&time_range=${tr}`, {
+      cache: "no-store",
+    });
+    if (!r.ok) return { error: `Top artists fetch failed (${r.status})` };
+    const data = (await r.json()) as { items?: ArtistsSnapshot["items"] };
+    const items = data.items ?? [];
+    if (items.length === 0) return { error: "No artists to share" };
+    const snap: ArtistsSnapshot = {
+      version: SNAPSHOT_VERSION,
+      kind: "artists",
+      ownerName: displayName,
+      exportedAt: Date.now(),
+      timeRange: tr,
+      items,
+    };
+    return snap;
+  }
+
+  async function share() {
+    setState({ kind: "baking" });
+    try {
+      const snap = mode === "library"
+        ? await bakeLibrary()
+        : await bakeArtists();
+      if ("error" in snap) {
+        setState({ kind: "idle" });
+        showToast({ kind: "error", message: snap.error });
+        return;
+      }
 
       setState({ kind: "posting" });
       const res = await fetch("/api/share/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(snapshot),
+        body: JSON.stringify(snap),
         cache: "no-store",
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setState({
+        setState({ kind: "idle" });
+        showToast({
           kind: "error",
           message: `Share failed: ${data.error ?? res.status}`,
         });
@@ -155,9 +234,9 @@ export default function ShareConstellationButton() {
     }
   }
 
-  // Inline-flex; positioned by the parent wrapper in /library next to
-  // ← Lyra. Toast renders as a fixed bottom-center bar (below) so it
-  // doesn't fight the source-toggle / filter chrome at the top.
+  // Inline-flex; positioned by the parent wrapper. Toast renders as a
+  // fixed bottom-center bar (below) so it doesn't fight the source-toggle /
+  // filter chrome at the top.
   return (
     <>
       <div className="pointer-events-auto flex flex-col items-start gap-1">

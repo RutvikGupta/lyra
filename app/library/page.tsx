@@ -1,6 +1,5 @@
 import ExploreView from "@/components/ExploreView";
 import PublishShowcaseButton from "@/components/PublishShowcaseButton";
-import ShareConstellationButton from "@/components/ShareConstellationButton";
 import ShowcaseOwnerBanner from "@/components/ShowcaseOwnerBanner";
 import SoftLink from "@/components/SoftLink";
 
@@ -16,15 +15,15 @@ export default function LibraryPage() {
         </SoftLink>
       </header>
       <ShowcaseOwnerBanner scope="library" />
-      {/* Owner / library-creator controls — pinned next to ← Lyra in
-          the top-left so they don't overlap node-info or the source
-          toggle on narrow screens. Wraps to a column when both are
-          present and the viewport is too tight for a single row. */}
+      {/* Owner-only Publish — pinned next to ← Lyra in the top-left.
+          Hidden for visitors (where the banner takes this slot). The
+          Share button is rendered by ExploreView itself in the
+          top-right corner so it never collides with the banner. */}
       <div className="pointer-events-none absolute left-20 top-5 z-30 flex flex-wrap items-start gap-2 sm:left-28 sm:top-6">
         <PublishShowcaseButton />
-        <ShareConstellationButton />
       </div>
       <ExploreView
+        share={{ mode: "library" }}
         initialCriteria={{
           kind: "library",
           nodeType: "tracks",

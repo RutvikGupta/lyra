@@ -2,7 +2,20 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import {
+  BackSide,
+  BufferAttribute,
+  BufferGeometry,
+  Group,
+  type Material,
+  Mesh,
+  MeshBasicMaterial,
+  MOUSE,
+  Points,
+  PointsMaterial,
+  SphereGeometry,
+  TOUCH,
+} from "three";
 import {
   aggregateTopArtists,
   aggregateTopArtistsFromPlays,
@@ -17,6 +30,12 @@ import {
   type GraphLink,
   type GraphNode,
 } from "@/lib/graph";
+import {
+  isArtistsSnapshot,
+  type ArtistsSnapshot,
+  type LibrarySnapshot,
+  type Snapshot,
+} from "@/lib/showcase-library";
 import { loadHistory } from "@/lib/storage";
 import type { Play } from "@/lib/types";
 import type { Criteria, LibraryCriteria } from "./CriteriaBar";
@@ -50,25 +69,12 @@ function isLowPowerDevice(): boolean {
   return narrow || coarse;
 }
 
-type SharedSnapshot = {
-  ownerName?: string;
-  topTracks: {
-    uri?: string;
-    name: string;
-    artistName: string;
-    albumName?: string;
-    playCount: number;
-    msPlayed: number;
-    firstPlayed?: number;
-  }[];
-  topArtists: {
-    name: string;
-    playCount: number;
-    msPlayed: number;
-    trackCount: number;
-  }[];
-  artistGenres: Record<string, string[]>;
-};
+// Local alias kept for the existing library-snapshot branch — a
+// shape-compatible subset of LibrarySnapshot.
+type SharedLibrarySnapshot = Pick<
+  LibrarySnapshot,
+  "topTracks" | "topArtists" | "artistGenres"
+> & { ownerName?: string };
 
 export default function Starfield({
   criteria,
@@ -77,11 +83,17 @@ export default function Starfield({
 }: {
   criteria: Criteria;
   onCriteriaChange?: (next: Criteria) => void;
-  // When provided, library-mode renders directly from this snapshot
-  // (used by /share/[id]) instead of falling back to /api/showcase/library
-  // or IndexedDB.
-  sharedSnapshot?: SharedSnapshot;
+  // When provided, renders directly from this snapshot (used by
+  // /share/[id]) instead of falling back to /api/showcase/library, the
+  // live /api/top, or IndexedDB. Branches on snapshot kind:
+  //   library snapshot → criteria.kind="library" path
+  //   artists snapshot → criteria.kind="api" path
+  sharedSnapshot?: Snapshot;
 }) {
+  const sharedArtists: ArtistsSnapshot | null =
+    sharedSnapshot && isArtistsSnapshot(sharedSnapshot) ? sharedSnapshot : null;
+  const sharedLibrary: SharedLibrarySnapshot | null =
+    sharedSnapshot && !isArtistsSnapshot(sharedSnapshot) ? sharedSnapshot : null;
   // rawGraph holds the unfiltered output of buildArtistGraph/buildTrackGraph.
   // displayGraph is the version actually rendered, after Phase-B tag-filter
   // + cluster-color transforms — recomputed cheaply when criteria change.
@@ -121,39 +133,46 @@ export default function Starfield({
         let items: unknown[] = [];
 
         if (criteria.kind === "api") {
-          // Retry on 503 — the route returns that during the post-OAuth
-          // token-propagation window so we don't silently serve showcase
-          // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
-          const RETRY_DELAYS = [1000, 2000, 4000];
-          let attempt = 0;
-          let r: Response;
-          while (true) {
-            r = await fetch(
-              `/api/top?type=artists&time_range=${criteria.timeRange}`,
-              { cache: "no-store" },
-            );
-            if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
-            await new Promise((resolve) =>
-              setTimeout(resolve, RETRY_DELAYS[attempt++]),
-            );
-            if (cancelled) return;
-          }
-          if (r.status === 401) {
-            if (!cancelled)
-              setError(
-                "Connect Spotify on the home page to load your top artists.",
+          // /share/[id] artist snapshot path: skip the network round-trip
+          // and render directly from the baked items. Recipients have no
+          // OAuth, so /api/top would just 401 anyway.
+          if (sharedArtists) {
+            items = sharedArtists.items;
+          } else {
+            // Retry on 503 — the route returns that during the post-OAuth
+            // token-propagation window so we don't silently serve showcase
+            // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
+            const RETRY_DELAYS = [1000, 2000, 4000];
+            let attempt = 0;
+            let r: Response;
+            while (true) {
+              r = await fetch(
+                `/api/top?type=artists&time_range=${criteria.timeRange}`,
+                { cache: "no-store" },
               );
-            return;
+              if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
+              await new Promise((resolve) =>
+                setTimeout(resolve, RETRY_DELAYS[attempt++]),
+              );
+              if (cancelled) return;
+            }
+            if (r.status === 401) {
+              if (!cancelled)
+                setError(
+                  "Connect Spotify on the home page to load your top artists.",
+                );
+              return;
+            }
+            if (!r.ok) {
+              if (!cancelled) setError(`Failed (${r.status})`);
+              return;
+            }
+            const data = await r.json();
+            if (cancelled) return;
+            items = data.items ?? [];
           }
-          if (!r.ok) {
-            if (!cancelled) setError(`Failed (${r.status})`);
-            return;
-          }
-          const data = await r.json();
-          if (cancelled) return;
-          items = data.items ?? [];
         } else {
-          const history = sharedSnapshot ? null : await loadHistory();
+          const history = sharedLibrary ? null : await loadHistory();
           if (cancelled) return;
           if (history?.plays?.length) setPlays(history.plays);
 
@@ -164,7 +183,7 @@ export default function Starfield({
           // + per-track firstPlayed for the Discovered filter, no raw
           // plays for time-of-day filtering.
           if (!history || history.plays.length === 0) {
-            let snap: SharedSnapshot | null = sharedSnapshot ?? null;
+            let snap: SharedLibrarySnapshot | null = sharedLibrary;
             if (!snap) {
               const sr = await fetch("/api/showcase/library", {
                 cache: "no-store",
@@ -181,7 +200,7 @@ export default function Starfield({
                   setError(`Showcase library fetch failed (${sr.status})`);
                 return;
               }
-              snap = (await sr.json()) as SharedSnapshot;
+              snap = (await sr.json()) as SharedLibrarySnapshot;
               if (cancelled) return;
             }
 
@@ -627,14 +646,18 @@ export default function Starfield({
     const NODE_REL_SIZE = 10;
     const renderedRadius = NODE_REL_SIZE * Math.cbrt(matchedVal);
 
-    // Inner pulse — sharp, close-in glow visible at any zoom.
-    const inner = new THREE.Mesh(
-      new THREE.SphereGeometry(renderedRadius * 2.2, 32, 32),
-      new THREE.MeshBasicMaterial({
+    // Inner pulse — sharp, close-in glow visible at any zoom. Drop sphere
+    // tessellation on low-power devices: at this radius/opacity, 16-segment
+    // and 32-segment look nearly identical but the 16-segment version uses
+    // ~1/4 the vertices, freeing the GPU for the rest of the graph.
+    const innerSegments = lowPower ? 16 : 32;
+    const inner = new Mesh(
+      new SphereGeometry(renderedRadius * 2.2, innerSegments, innerSegments),
+      new MeshBasicMaterial({
         color: 0x1ed760,
         transparent: true,
         opacity: 0.45,
-        side: THREE.BackSide,
+        side: BackSide,
         depthWrite: false,
       }),
     );
@@ -643,36 +666,49 @@ export default function Starfield({
     scene.add(inner);
 
     // Outer beacon — much larger, very faint glow that stays visible when
-    // the camera is zoomed out far. Same world-space scaling so it always
-    // dwarfs the node, no matter the distance.
-    const outer = new THREE.Mesh(
-      new THREE.SphereGeometry(renderedRadius * 8, 24, 24),
-      new THREE.MeshBasicMaterial({
-        color: 0x1ed760,
-        transparent: true,
-        opacity: 0.15,
-        side: THREE.BackSide,
-        depthWrite: false,
-      }),
-    );
-    outer.name = "now-playing-halo-outer";
-    outer.raycast = () => {};
-    scene.add(outer);
+    // the camera is zoomed out far. Skipped on low-power devices: the
+    // additional draw call + transparent overdraw is the expensive part,
+    // not the geometry.
+    const outer = lowPower
+      ? null
+      : new Mesh(
+          new SphereGeometry(renderedRadius * 8, 24, 24),
+          new MeshBasicMaterial({
+            color: 0x1ed760,
+            transparent: true,
+            opacity: 0.15,
+            side: BackSide,
+            depthWrite: false,
+          }),
+        );
+    if (outer) {
+      outer.name = "now-playing-halo-outer";
+      outer.raycast = () => {};
+      scene.add(outer);
+    }
 
     let rafId = 0;
     let cancelled = false;
     const animate = () => {
       if (cancelled) return;
+      // Pause when the tab is hidden — RAF already throttles to ~1Hz in
+      // background tabs but we have nothing useful to update there.
+      if (typeof document !== "undefined" && document.hidden) {
+        rafId = requestAnimationFrame(animate);
+        return;
+      }
       const t = Date.now() / 350;
       const sinT = Math.sin(t);
       // Inner pulses in scale + opacity for the "close-up" beat.
       inner.scale.setScalar(1.0 + 0.35 * sinT);
-      (inner.material as THREE.MeshBasicMaterial).opacity =
+      (inner.material as MeshBasicMaterial).opacity =
         0.3 + 0.25 * (0.5 + 0.5 * sinT);
       // Outer breathes more slowly and stays soft for distant visibility.
-      outer.scale.setScalar(0.9 + 0.25 * Math.sin(t * 0.6));
-      (outer.material as THREE.MeshBasicMaterial).opacity =
-        0.1 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.6));
+      if (outer) {
+        outer.scale.setScalar(0.9 + 0.25 * Math.sin(t * 0.6));
+        (outer.material as MeshBasicMaterial).opacity =
+          0.1 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.6));
+      }
 
       const positioned = matchedNode as GraphNode & {
         x?: number;
@@ -683,7 +719,7 @@ export default function Starfield({
       const y = positioned.y ?? 0;
       const z = positioned.z ?? 0;
       inner.position.set(x, y, z);
-      outer.position.set(x, y, z);
+      if (outer) outer.position.set(x, y, z);
       rafId = requestAnimationFrame(animate);
     };
     animate();
@@ -692,13 +728,15 @@ export default function Starfield({
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
       scene.remove(inner);
-      scene.remove(outer);
       inner.geometry.dispose();
-      outer.geometry.dispose();
-      (inner.material as THREE.Material).dispose();
-      (outer.material as THREE.Material).dispose();
+      (inner.material as Material).dispose();
+      if (outer) {
+        scene.remove(outer);
+        outer.geometry.dispose();
+        (outer.material as Material).dispose();
+      }
     };
-  }, [graph, matchedNode]);
+  }, [graph, matchedNode, lowPower]);
 
   // Re-bind controls whenever a fresh graph mounts: left-drag pans the view,
   // right-drag rotates, scroll zooms. Native trackball-style "rotate on left"
@@ -709,15 +747,15 @@ export default function Starfield({
       const controls = graphRef.current?.controls?.();
       if (!controls?.mouseButtons) return;
       controls.mouseButtons = {
-        LEFT: THREE.MOUSE.PAN,
-        MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.ROTATE,
+        LEFT: MOUSE.PAN,
+        MIDDLE: MOUSE.DOLLY,
+        RIGHT: MOUSE.ROTATE,
       };
       // Match the same gestures for touch devices.
       if (controls.touches) {
         controls.touches = {
-          ONE: THREE.TOUCH.PAN,
-          TWO: THREE.TOUCH.DOLLY_ROTATE,
+          ONE: TOUCH.PAN,
+          TWO: TOUCH.DOLLY_ROTATE,
         };
       }
       controls.enableDamping = true;
@@ -1001,8 +1039,8 @@ export default function Starfield({
   );
 }
 
-function createStarfield(lowPower: boolean): THREE.Group {
-  const group = new THREE.Group();
+function createStarfield(lowPower: boolean): Group {
+  const group = new Group();
   // Halve the star count on low-power devices — the visual loss is barely
   // perceptible at 2000m radius, but mobile GPUs love it.
   const m = lowPower ? 0.4 : 1;
@@ -1017,7 +1055,7 @@ function makeStarLayer(
   size: number,
   opacity: number,
   color: number,
-): THREE.Points {
+): Points {
   const RADIUS = 2000;
   const positions = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
@@ -1029,9 +1067,9 @@ function makeStarLayer(
     positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
     positions[i * 3 + 2] = r * Math.cos(phi);
   }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const material = new THREE.PointsMaterial({
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(positions, 3));
+  const material = new PointsMaterial({
     color,
     size,
     transparent: true,
@@ -1039,7 +1077,7 @@ function makeStarLayer(
     sizeAttenuation: false,
     depthWrite: false,
   });
-  const points = new THREE.Points(geometry, material);
+  const points = new Points(geometry, material);
   // Don't intercept mouse picks meant for artist nodes.
   points.raycast = () => {};
   return points;

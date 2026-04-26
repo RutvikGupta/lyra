@@ -3,7 +3,7 @@
 import { useState } from "react";
 import CriteriaBar, { type Criteria } from "./CriteriaBar";
 import Starfield from "./Starfield";
-import type { LibrarySnapshot } from "@/lib/showcase-library";
+import { isArtistsSnapshot, type Snapshot } from "@/lib/showcase-library";
 
 // Renders a shared snapshot. Inlines the snapshot as initialSnapshot so
 // Starfield doesn't have to round-trip /api/share/{id} again. Reuses the
@@ -11,7 +11,7 @@ import type { LibrarySnapshot } from "@/lib/showcase-library";
 // experience (within the limits of what's baked into the snapshot —
 // all-time stats and per-track firstPlayed, no raw plays).
 
-const DEFAULT_CRITERIA: Criteria = {
+const DEFAULT_LIBRARY_CRITERIA: Criteria = {
   kind: "library",
   nodeType: "tracks",
   year: "all",
@@ -31,9 +31,12 @@ const DEFAULT_CRITERIA: Criteria = {
 export default function SharedConstellation({
   snapshot,
 }: {
-  snapshot: LibrarySnapshot;
+  snapshot: Snapshot;
 }) {
-  const [criteria, setCriteria] = useState<Criteria>(DEFAULT_CRITERIA);
+  const initial: Criteria = isArtistsSnapshot(snapshot)
+    ? { kind: "api", timeRange: snapshot.timeRange }
+    : DEFAULT_LIBRARY_CRITERIA;
+  const [criteria, setCriteria] = useState<Criteria>(initial);
   return (
     <>
       <Starfield

@@ -1,4 +1,4 @@
-import type { LibrarySnapshot } from "@/lib/showcase-library";
+import type { Snapshot } from "@/lib/showcase-library";
 import { SNAPSHOT_VERSION } from "@/lib/showcase-library";
 import { newShareId } from "@/lib/share-id";
 import { writeShare } from "@/lib/share-store";
@@ -11,13 +11,31 @@ import { writeShare } from "@/lib/share-store";
 
 const MAX_BYTES = 1_000_000; // 1 MB — top-200 baked snapshots run ~50KB; 20× headroom.
 
-function isLibrarySnapshot(x: unknown): x is LibrarySnapshot {
+const VALID_TIME_RANGES = new Set([
+  "short_term",
+  "medium_term",
+  "long_term",
+]);
+
+function isSnapshot(x: unknown): x is Snapshot {
   if (!x || typeof x !== "object") return false;
   const o = x as Record<string, unknown>;
+  if (
+    o.version !== SNAPSHOT_VERSION ||
+    typeof o.ownerName !== "string" ||
+    typeof o.exportedAt !== "number"
+  ) {
+    return false;
+  }
+  if (o.kind === "artists") {
+    return (
+      typeof o.timeRange === "string" &&
+      VALID_TIME_RANGES.has(o.timeRange) &&
+      Array.isArray(o.items)
+    );
+  }
+  // kind missing/"library" → require library fields
   return (
-    o.version === SNAPSHOT_VERSION &&
-    typeof o.ownerName === "string" &&
-    typeof o.exportedAt === "number" &&
     Array.isArray(o.topTracks) &&
     Array.isArray(o.topArtists) &&
     !!o.artistGenres &&
@@ -36,7 +54,7 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: "invalid_json" }, { status: 400 });
   }
-  if (!isLibrarySnapshot(snapshot)) {
+  if (!isSnapshot(snapshot)) {
     return Response.json(
       { error: "snapshot_shape_invalid" },
       { status: 400 },

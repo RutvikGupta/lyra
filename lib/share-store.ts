@@ -7,7 +7,7 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { LibrarySnapshot } from "./showcase-library";
+import type { Snapshot } from "./showcase-library";
 import { SNAPSHOT_VERSION } from "./showcase-library";
 
 const PREFIX = "shares/";
@@ -21,10 +21,10 @@ function localPath(id: string) {
   return join(LOCAL_DIR, `${id}.json`);
 }
 
-async function readFromLocal(id: string): Promise<LibrarySnapshot | null> {
+async function readFromLocal(id: string): Promise<Snapshot | null> {
   try {
     const raw = await readFile(localPath(id), "utf8");
-    return JSON.parse(raw) as LibrarySnapshot;
+    return JSON.parse(raw) as Snapshot;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === "ENOENT") return null;
@@ -32,7 +32,7 @@ async function readFromLocal(id: string): Promise<LibrarySnapshot | null> {
   }
 }
 
-async function readFromBlob(id: string): Promise<LibrarySnapshot | null> {
+async function readFromBlob(id: string): Promise<Snapshot | null> {
   const { list } = await import("@vercel/blob");
   const path = `${PREFIX}${id}.json`;
   const result = await list({ prefix: path, limit: 1 });
@@ -40,10 +40,10 @@ async function readFromBlob(id: string): Promise<LibrarySnapshot | null> {
   if (!item) return null;
   const res = await fetch(item.url, { cache: "no-store" });
   if (!res.ok) return null;
-  return (await res.json()) as LibrarySnapshot;
+  return (await res.json()) as Snapshot;
 }
 
-export async function readShare(id: string): Promise<LibrarySnapshot | null> {
+export async function readShare(id: string): Promise<Snapshot | null> {
   const data = blobConfigured()
     ? await readFromBlob(id)
     : await readFromLocal(id);
@@ -53,7 +53,7 @@ export async function readShare(id: string): Promise<LibrarySnapshot | null> {
 
 export async function writeShare(
   id: string,
-  snap: LibrarySnapshot,
+  snap: Snapshot,
 ): Promise<{ mode: "blob" | "local"; url?: string; path?: string }> {
   const json = JSON.stringify(snap, null, 0);
 
