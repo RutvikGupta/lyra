@@ -124,7 +124,7 @@ export default async function ShowcaseConstellation() {
               href="/library"
               className="inline-flex items-center gap-2 rounded-full border border-[var(--brand)]/40 bg-[var(--brand)]/[0.08] px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[var(--brand)]/[0.16]"
             >
-              Track library →
+              Top streams →
             </Link>
           </div>
         </div>
