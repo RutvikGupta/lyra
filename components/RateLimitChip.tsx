@@ -59,7 +59,7 @@ export default function RateLimitChip() {
     <div
       role="status"
       aria-live="polite"
-      className="overlay-tab pointer-events-auto absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/[0.08] px-3.5 py-1.5 text-[11px] font-semibold text-amber-200 backdrop-blur-md"
+      className="overlay-tab pointer-events-auto fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/[0.08] px-3.5 py-1.5 text-[11px] font-semibold text-amber-200 backdrop-blur-md"
     >
       <span aria-hidden className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-300" />
       <span>Spotify is throttling your account — showing showcase data</span>

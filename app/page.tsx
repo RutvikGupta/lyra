@@ -1,6 +1,7 @@
 import Link from "next/link";
 import NowPlaying from "@/components/NowPlaying";
 import ProfileBadge from "@/components/ProfileBadge";
+import RateLimitChip from "@/components/RateLimitChip";
 import RecentlyPlayed from "@/components/RecentlyPlayed";
 import ShowcaseConstellation from "@/components/ShowcaseConstellation";
 import TopArtists from "@/components/TopArtists";
@@ -16,6 +17,7 @@ export default async function Home({
   const authed = await hasAuthSession();
   return (
     <div className="relative min-h-screen overflow-hidden text-white">
+      <RateLimitChip />
       {/* Animated aurora layered on top of the body gradient */}
       <div
         aria-hidden
