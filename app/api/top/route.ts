@@ -62,19 +62,28 @@ export async function GET(req: Request) {
           items: shapeArtists(enriched),
         });
       }
-      // Authed but Spotify call failed (often the post-OAuth token
-      // propagation lag). Surface a 503 so the client retries — falling
-      // through to showcase here is what made signed-in users briefly see
-      // the owner's top artists.
-      return Response.json(
-        {
-          authenticated: true,
-          source: "personal",
-          items: [],
-          retrying: true,
-        },
-        { status: 503 },
-      );
+      // Authed but the call failed. Two distinct causes:
+      //   (a) refresh token was revoked / Spotify said invalid_grant —
+      //       getAccessToken already cleared the cookie, so hasAuthSession
+      //       now returns false. Fall through to the showcase path so the
+      //       user gets *something* instead of a 503 wall.
+      //   (b) genuinely transient (post-OAuth lag, Spotify outage) — the
+      //       cookie is still in place. Surface 503 so the client retries
+      //       with backoff and we don't briefly serve showcase data to a
+      //       user whose own data will arrive any second.
+      const stillAuthed = await hasAuthSession();
+      if (stillAuthed) {
+        return Response.json(
+          {
+            authenticated: true,
+            source: "personal",
+            items: [],
+            retrying: true,
+          },
+          { status: 503 },
+        );
+      }
+      // Cookie was cleared mid-request → flow into the showcase branch.
     }
 
     if (!showcaseConfigured()) {
