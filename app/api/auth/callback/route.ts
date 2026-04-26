@@ -115,8 +115,10 @@ async function verifyToken(
       });
       if (res.ok) return { ok: true, status: res.status };
       lastStatus = res.status;
-      // 401/403 are deterministic — no point retrying. Bail immediately.
-      if (res.status === 401 || res.status === 403) {
+      // 401/403/429 are deterministic on this short timescale — no point
+      // burning the retry budget. 429 in particular comes with a
+      // Retry-After header in seconds; sub-second backoff won't clear it.
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
         return { ok: false, status: res.status };
       }
     } catch {

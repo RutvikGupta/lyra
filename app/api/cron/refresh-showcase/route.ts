@@ -1,16 +1,21 @@
-import { invalidateShowcaseCache } from "@/lib/spotify-showcase";
+import {
+  invalidateShowcaseCache,
+  resetShowcaseLatch,
+} from "@/lib/spotify-showcase";
 
 // Vercel cron entry point. Vercel injects an `Authorization: Bearer <CRON_SECRET>`
 // header so we can verify it isn't a public hit.
 //
 // On each tick:
-//   1. Invalidate the in-memory cache so the next refetch is fresh.
-//   2. Hit each showcase endpoint to warm the cache (so a real visitor
+//   1. Reset the "env token is dead" latch + drop the rotated in-memory
+//      refresh token so we re-read SHOWCASE_REFRESH_TOKEN from env. This
+//      is the self-heal: if Spotify rotated the token (or the user has
+//      since updated the env var), the next call rebuilds state cleanly
+//      without needing a redeploy.
+//   2. Invalidate the in-memory response cache so the next refetch is
+//      fresh.
+//   3. Hit each showcase endpoint to warm the cache (so a real visitor
 //      hitting the page doesn't pay the cold-start latency).
-//
-// The `cron job` itself does not need to do work beyond this — visitors
-// will pull from the warm in-memory cache, with TTLs (15s / 5min / 1h)
-// controlling how stale the data is between cron ticks.
 
 export async function GET(req: Request) {
   const expected = process.env.CRON_SECRET;
@@ -21,6 +26,7 @@ export async function GET(req: Request) {
     }
   }
 
+  resetShowcaseLatch();
   invalidateShowcaseCache();
 
   const origin = new URL(req.url).origin;

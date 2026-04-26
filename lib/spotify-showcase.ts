@@ -138,3 +138,16 @@ export function invalidateShowcaseCache(key?: string) {
   if (key) responseCache.delete(key);
   else responseCache.clear();
 }
+
+// Clear the "this env token is permanently dead" latch and any cached
+// access token. Used by the daily cron so that, if the user has rotated
+// SHOWCASE_REFRESH_TOKEN since the latch fired, the next refresh attempt
+// uses the fresh value instead of the stale in-memory one. If the env
+// var is *still* bad, the latch will simply re-fire on the next call —
+// no worse off than before.
+export function resetShowcaseLatch() {
+  state.envTokenInvalid = false;
+  state.cachedAccess = null;
+  state.liveRefreshToken = null;
+  state.inflightRefresh = null;
+}

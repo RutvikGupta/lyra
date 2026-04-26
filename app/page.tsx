@@ -275,6 +275,9 @@ function decodeErrorMessage(raw: string): string {
   if (raw === "token_invalid") {
     return "Spotify returned a token that doesn't authenticate. Try again — if it persists, the dev app may need to be re-created.";
   }
+  if (raw === "verify_429") {
+    return "Spotify is rate-limiting auth requests on your account (too many recent logins). Wait ~15–30 minutes, then try again. The token they issued is fine — they're just throttling /me checks.";
+  }
   if (raw.startsWith("verify_")) {
     return `Spotify API verification failed (HTTP ${raw.slice(7)}). Try again; if it persists, your account may not have access to the dev app.`;
   }
