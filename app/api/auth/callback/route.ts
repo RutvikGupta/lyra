@@ -78,13 +78,25 @@ export async function GET(req: Request) {
   const verifyResult = await verifyToken(tokens.access_token);
   if (!verifyResult.ok) {
     const status = verifyResult.status;
-    const reason =
-      status === 403
-        ? "not_on_allowlist"
-        : status === 401
-          ? "token_invalid"
-          : `verify_${status}`;
-    return NextResponse.redirect(new URL(`/?error=${reason}`, req.url));
+    // 429 from /me means Spotify is throttling /me checks specifically —
+    // not that the token is bad. The token they just issued is almost
+    // certainly valid (the exchange succeeded), and the dev-allowlist
+    // check (which is the reason we verify at all) returns 403, not 429.
+    // So pass the rate-limit case through: commit the cookie and let the
+    // user in. If they really aren't on the allowlist, they'll discover
+    // it the moment their first non-throttled API call comes back 403.
+    if (status !== 429) {
+      const reason =
+        status === 403
+          ? "not_on_allowlist"
+          : status === 401
+            ? "token_invalid"
+            : `verify_${status}`;
+      return NextResponse.redirect(new URL(`/?error=${reason}`, req.url));
+    }
+    console.warn(
+      "[auth] verify /me returned 429; accepting token without verification",
+    );
   }
 
   store.set(REFRESH_COOKIE, tokens.refresh_token, {
