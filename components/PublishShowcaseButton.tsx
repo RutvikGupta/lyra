@@ -93,9 +93,12 @@ export default function PublishShowcaseButton() {
       });
       if (!pub.ok) {
         const data = await pub.json().catch(() => ({}));
+        const detail = data.detail
+          ? ` — ${String(data.detail).slice(0, 240)}`
+          : "";
         setState({
           kind: "error",
-          message: `Publish failed: ${data.error ?? pub.status}`,
+          message: `Publish failed: ${data.error ?? pub.status}${detail}`,
         });
         return;
       }
