@@ -62,28 +62,15 @@ export async function GET(req: Request) {
           items: shapeArtists(enriched),
         });
       }
-      // Authed but the call failed. Two distinct causes:
-      //   (a) refresh token was revoked / Spotify said invalid_grant —
-      //       getAccessToken already cleared the cookie, so hasAuthSession
-      //       now returns false. Fall through to the showcase path so the
-      //       user gets *something* instead of a 503 wall.
-      //   (b) genuinely transient (post-OAuth lag, Spotify outage) — the
-      //       cookie is still in place. Surface 503 so the client retries
-      //       with backoff and we don't briefly serve showcase data to a
-      //       user whose own data will arrive any second.
-      const stillAuthed = await hasAuthSession();
-      if (stillAuthed) {
-        return Response.json(
-          {
-            authenticated: true,
-            source: "personal",
-            items: [],
-            retrying: true,
-          },
-          { status: 503 },
-        );
-      }
-      // Cookie was cleared mid-request → flow into the showcase branch.
+      // Authed but Spotify failed — could be revoked refresh token,
+      // post-OAuth lag, or rate-limiting on /me/top/artists. The earlier
+      // design returned 503 here so Starfield could retry with backoff,
+      // but a sustained 429 just exhausts the retry budget and surfaces
+      // "Failed (503)" on the constellation. Fall through to the
+      // showcase branch instead so the user sees kivtur00's graph
+      // rather than a hard error wall. The brief post-OAuth race window
+      // (showing showcase data for 1–2s before the user's data arrives
+      // on a refetch) is a fair trade for never failing hard.
     }
 
     if (!showcaseConfigured()) {
