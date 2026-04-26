@@ -37,6 +37,12 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Showcase + share snapshots — these are baked at runtime and live in
+# Vercel Blob in production. The local `public/` files are dev-only
+# scratch space; committing them would leak personal listening history.
+/public/showcase-library.json
+/public/shares/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

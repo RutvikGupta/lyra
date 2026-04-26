@@ -7,6 +7,11 @@ export type ArtistInput = {
   popularity: number;
   listeners?: number;
   playcount?: number;
+  // Library mode: user's personal play count for this artist.
+  myPlayCount?: number;
+  // Library mode: total ms the user has spent listening to this artist.
+  // Used for sortBy="msPlayed" sizing — falls back to myPlayCount.
+  myMsPlayed?: number;
 };
 
 export type GraphNode = {
@@ -21,6 +26,13 @@ export type GraphNode = {
   primaryGenre: string;
   color: string;
   size: number;
+  // Track-only — present when this node is a track instead of an artist.
+  // The renderer/details panel branch on the presence of artistName.
+  artistName?: string;
+  albumName?: string;
+  myPlayCount?: number;
+  myMsPlayed?: number;
+  trackUri?: string;
 };
 
 export type GraphLink = {
@@ -28,7 +40,81 @@ export type GraphLink = {
   target: string;
   shared: number;
   sharedGenres: string[];
+  // Jaccard similarity = |shared| / |union of genres|. Used for edge
+  // ranking + top-K filtering. Range 0..1.
+  jaccard: number;
 };
+
+// Edge selection knobs — tune these to make the graph more or less dense.
+const MIN_JACCARD = 0.22;
+const MAX_LINKS_PER_NODE = 8;
+
+// Anchors orphan nodes (no edges passing the Jaccard threshold) to their
+// single best-overlap neighbor regardless of similarity strength. Prevents
+// strong charge repulsion from flinging isolated nodes off into space.
+function addOrphanAnchors(
+  nodes: { id: string }[],
+  links: GraphLink[],
+  bestNeighborByNode: Map<string, GraphLink>,
+): GraphLink[] {
+  const linked = new Set<string>();
+  for (const l of links) {
+    linked.add(l.source);
+    linked.add(l.target);
+  }
+  const seen = new Set<GraphLink>(links);
+  const result = [...links];
+  for (const node of nodes) {
+    if (linked.has(node.id)) continue;
+    const best = bestNeighborByNode.get(node.id);
+    if (best && !seen.has(best)) {
+      result.push(best);
+      seen.add(best);
+    }
+  }
+  return result;
+}
+
+function computeOverlap(
+  aGenres: Set<string>,
+  bGenres: string[],
+): { shared: string[]; jaccard: number } {
+  const sharedSet = new Set<string>();
+  const unionSet = new Set<string>(aGenres);
+  for (const g of bGenres) {
+    unionSet.add(g);
+    if (aGenres.has(g)) sharedSet.add(g);
+  }
+  const shared = Array.from(sharedSet);
+  const jaccard = unionSet.size === 0 ? 0 : shared.length / unionSet.size;
+  return { shared, jaccard };
+}
+
+// Keep an edge if at least one endpoint has it in their top-K strongest
+// connections. Produces a sparse, navigable graph where each node has
+// roughly ≤K but no node gets stranded entirely.
+function topKPerNode(
+  links: GraphLink[],
+  k: number,
+): GraphLink[] {
+  const byNode = new Map<string, GraphLink[]>();
+  for (const link of links) {
+    const a = byNode.get(link.source) ?? [];
+    a.push(link);
+    byNode.set(link.source, a);
+    const b = byNode.get(link.target) ?? [];
+    b.push(link);
+    byNode.set(link.target, b);
+  }
+  const kept = new Set<GraphLink>();
+  for (const arr of byNode.values()) {
+    arr.sort((a, b) => b.jaccard - a.jaccard);
+    for (let i = 0; i < Math.min(k, arr.length); i++) {
+      kept.add(arr[i]);
+    }
+  }
+  return Array.from(kept);
+}
 
 const PALETTE = [
   "#1ed760",
@@ -62,7 +148,99 @@ export function genreColor(genre: string): string {
   return PALETTE[hash(genre) % PALETTE.length];
 }
 
-export function buildArtistGraph(artists: ArtistInput[]): {
+export type TrackInput = {
+  uri?: string;
+  rank: number;
+  name: string;
+  artistName: string;
+  albumName?: string;
+  playCount: number;
+  msPlayed: number;
+};
+
+export function buildTrackGraph(
+  tracks: TrackInput[],
+  artistGenresByLowerName: Map<string, string[]>,
+  sortBy: "msPlayed" | "playCount" = "playCount",
+): { nodes: GraphNode[]; links: GraphLink[] } {
+  // Size by whichever metric the user is currently sorting by, so the
+  // visual matches the ranking. sqrt-scaled so the top item doesn't
+  // dwarf the rest.
+  const metric = (t: TrackInput) =>
+    sortBy === "msPlayed" ? (t.msPlayed ?? 0) : (t.playCount ?? 0);
+  const maxMetric = tracks.reduce((m, t) => Math.max(m, metric(t)), 0);
+  const nodes: GraphNode[] = tracks.map((t) => {
+    const genres =
+      artistGenresByLowerName.get(t.artistName.toLowerCase()) ?? [];
+    const primaryGenre = genres[0] ?? "unknown";
+    const size =
+      maxMetric > 0
+        ? 8 + Math.sqrt(metric(t) / maxMetric) * 24
+        : 8;
+    return {
+      id:
+        t.uri ??
+        `track:${t.name.toLowerCase()}::${t.artistName.toLowerCase()}`,
+      name: t.name,
+      genres,
+      image: null,
+      popularity: 0,
+      listeners: 0,
+      playcount: 0,
+      rank: t.rank,
+      primaryGenre,
+      color: genreColor(primaryGenre),
+      size,
+      artistName: t.artistName,
+      albumName: t.albumName,
+      myPlayCount: t.playCount,
+      myMsPlayed: t.msPlayed,
+      trackUri: t.uri,
+    };
+  });
+
+  const candidates: GraphLink[] = [];
+  const bestNeighborByNode = new Map<string, GraphLink>();
+  for (let i = 0; i < nodes.length; i++) {
+    const aGenres = new Set(nodes[i].genres);
+    if (aGenres.size === 0) continue;
+    const aArtist = nodes[i].artistName?.toLowerCase();
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (aArtist && aArtist === nodes[j].artistName?.toLowerCase()) {
+        continue;
+      }
+      const { shared, jaccard } = computeOverlap(aGenres, nodes[j].genres);
+      if (shared.length === 0) continue;
+      const link: GraphLink = {
+        source: nodes[i].id,
+        target: nodes[j].id,
+        shared: shared.length,
+        sharedGenres: shared,
+        jaccard,
+      };
+      // Track each node's strongest possible neighbor (regardless of
+      // threshold) so orphans can be anchored later.
+      for (const id of [nodes[i].id, nodes[j].id]) {
+        const cur = bestNeighborByNode.get(id);
+        if (!cur || cur.jaccard < link.jaccard) {
+          bestNeighborByNode.set(id, link);
+        }
+      }
+      if (jaccard >= MIN_JACCARD && shared.length >= 2) {
+        candidates.push(link);
+      }
+    }
+  }
+  const filtered = topKPerNode(candidates, MAX_LINKS_PER_NODE);
+  const links = addOrphanAnchors(nodes, filtered, bestNeighborByNode);
+
+  return { nodes, links };
+}
+
+export function buildArtistGraph(
+  artists: ArtistInput[],
+  sortBy: "msPlayed" | "playCount" = "playCount",
+): {
   nodes: GraphNode[];
   links: GraphLink[];
 } {
@@ -72,12 +250,21 @@ export function buildArtistGraph(artists: ArtistInput[]): {
     popularity: typeof a.popularity === "number" ? a.popularity : 0,
   }));
 
+  // Size by the active sort metric in library mode (so the biggest node
+  // is always the top of the current ranking). API mode lacks per-user
+  // plays — fall back to rank-based sizing there.
+  const metric = (a: ArtistInput) =>
+    sortBy === "msPlayed" ? (a.myMsPlayed ?? 0) : (a.myPlayCount ?? 0);
+  const maxMetric = safe.reduce((m, a) => Math.max(m, metric(a)), 0);
   const nodes: GraphNode[] = safe.map((a) => {
     const primaryGenre = a.genres[0] ?? "unknown";
-    // Spotify removed `popularity` from artist responses in Feb 2026, so size
-    // by rank: rank 1 = largest (14), rank 50 = smallest (4). Linear taper.
-    const cappedRank = Math.min(Math.max(a.rank, 1), 50);
-    const size = 4 + ((50 - cappedRank) / 49) * 10;
+    let size: number;
+    if (maxMetric > 0 && metric(a) > 0) {
+      size = 8 + Math.sqrt(metric(a) / maxMetric) * 24;
+    } else {
+      const cappedRank = Math.min(Math.max(a.rank, 1), 50);
+      size = 8 + ((50 - cappedRank) / 49) * 22;
+    }
     return {
       id: a.id,
       name: a.name,
@@ -93,29 +280,34 @@ export function buildArtistGraph(artists: ArtistInput[]): {
     };
   });
 
-  const links: GraphLink[] = [];
-  // Require >=2 shared genres so weakly-related noise edges are dropped.
-  // Clusters stay dense; cross-cluster bridges only appear when there's
-  // genuine overlap (e.g. hip-hop ↔ pop ↔ rnb).
-  const MIN_SHARED = 2;
+  const candidates: GraphLink[] = [];
+  const bestNeighborByNode = new Map<string, GraphLink>();
   for (let i = 0; i < safe.length; i++) {
     const aGenres = new Set(safe[i].genres);
     if (aGenres.size === 0) continue;
     for (let j = i + 1; j < safe.length; j++) {
-      const sharedGenres: string[] = [];
-      for (const g of safe[j].genres) {
-        if (aGenres.has(g)) sharedGenres.push(g);
+      const { shared, jaccard } = computeOverlap(aGenres, safe[j].genres);
+      if (shared.length === 0) continue;
+      const link: GraphLink = {
+        source: safe[i].id,
+        target: safe[j].id,
+        shared: shared.length,
+        sharedGenres: shared,
+        jaccard,
+      };
+      for (const id of [safe[i].id, safe[j].id]) {
+        const cur = bestNeighborByNode.get(id);
+        if (!cur || cur.jaccard < link.jaccard) {
+          bestNeighborByNode.set(id, link);
+        }
       }
-      if (sharedGenres.length >= MIN_SHARED) {
-        links.push({
-          source: safe[i].id,
-          target: safe[j].id,
-          shared: sharedGenres.length,
-          sharedGenres,
-        });
+      if (jaccard >= MIN_JACCARD && shared.length >= 2) {
+        candidates.push(link);
       }
     }
   }
+  const filtered = topKPerNode(candidates, MAX_LINKS_PER_NODE);
+  const links = addOrphanAnchors(nodes, filtered, bestNeighborByNode);
 
   return { nodes, links };
 }

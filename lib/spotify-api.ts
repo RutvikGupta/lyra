@@ -1,4 +1,5 @@
 import { spotifyFetch } from "./spotify";
+import { spotifyShowcaseFetch } from "./spotify-showcase";
 
 export type SpotifyImage = { url: string; width: number; height: number };
 
@@ -48,6 +49,12 @@ async function getJson<T>(path: string): Promise<T | null> {
   return (await res.json()) as T;
 }
 
+async function getShowcaseJson<T>(path: string): Promise<T | null> {
+  const res = await spotifyShowcaseFetch(path);
+  if (!res || !res.ok) return null;
+  return (await res.json()) as T;
+}
+
 export function fetchProfile() {
   return getJson<SpotifyUser>("/me");
 }
@@ -82,7 +89,7 @@ async function fetchLastfmTags(artistName: string): Promise<string[]> {
   try {
     const res = await fetch(url.toString(), {
       cache: "no-store",
-      headers: { "User-Agent": "listening-web/0.1" },
+      headers: { "User-Agent": "lyra/0.1" },
     });
     if (!res.ok) return [];
     const data = (await res.json()) as {
@@ -130,7 +137,7 @@ async function fetchLastfmStats(artistName: string): Promise<ArtistStats> {
   try {
     const res = await fetch(url.toString(), {
       cache: "no-store",
-      headers: { "User-Agent": "listening-web/0.1" },
+      headers: { "User-Agent": "lyra/0.1" },
     });
     if (!res.ok) return { listeners: 0, playcount: 0 };
     const data = (await res.json()) as {
@@ -230,6 +237,19 @@ export function fetchTopArtists(time_range: TimeRange = "long_term", limit = 50)
   return getJson<Paged<SpotifyArtist>>(
     `/me/top/artists?time_range=${time_range}&limit=${limit}`,
   );
+}
+
+export function fetchShowcaseTopArtists(
+  time_range: TimeRange = "long_term",
+  limit = 50,
+) {
+  return getShowcaseJson<Paged<SpotifyArtist>>(
+    `/me/top/artists?time_range=${time_range}&limit=${limit}`,
+  );
+}
+
+export function fetchShowcaseProfile() {
+  return getShowcaseJson<SpotifyUser>("/me");
 }
 
 export function fetchTopTracks(time_range: TimeRange = "long_term", limit = 50) {

@@ -16,7 +16,7 @@ export default function ExploreView({
   );
   return (
     <>
-      <Starfield criteria={criteria} />
+      <Starfield criteria={criteria} onCriteriaChange={setCriteria} />
       <CriteriaBar criteria={criteria} onChange={setCriteria} />
     </>
   );

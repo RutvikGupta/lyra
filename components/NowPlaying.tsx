@@ -3,21 +3,23 @@
 import { useEffect, useState } from "react";
 
 type NowPlayingState = {
-  authenticated: boolean;
   isPlaying?: boolean;
+  progressMs?: number;
   track?: {
     name: string;
     uri: string;
     durationMs: number;
-    progressMs: number;
-    album: { name?: string; image?: string };
+    album?: { name?: string; image?: string };
     artists: { name: string; uri: string }[];
   };
 };
 
 type Snapshot = { state: NowPlayingState; fetchedAt: number };
 
-const POLL_MS = 2000;
+// Polling cadence — kept tight so song changes show up within ~2s.
+// Server-side has its own dedupe cache (~1s) so this isn't a Spotify API
+// hammer; multiple visitor polls in the same second collapse to one.
+const POLL_MS = 1500;
 const TICK_MS = 250;
 
 export default function NowPlaying() {
@@ -26,29 +28,58 @@ export default function NowPlaying() {
   // re-renders smoothly without re-hitting the API.
   const [, setTick] = useState(0);
 
-  // Server poll
+  // Server poll — public showcase route, refresh-token-backed.
+  // Pauses while the tab is hidden so we don't burn Spotify quota /
+  // battery on a visitor who tabbed away. Resumes with an immediate
+  // refresh so the user sees current state on tab focus.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function fetchOnce() {
+      if (typeof document !== "undefined" && document.hidden) {
+        // Don't burn an interval while hidden — onVisibilityChange will
+        // re-arm immediately when the user returns.
+        return;
+      }
       try {
-        const res = await fetch("/api/now-playing", { cache: "no-store" });
-        const next: NowPlayingState =
-          res.status === 401 ? { authenticated: false } : await res.json();
+        const res = await fetch("/api/now-playing", {
+          cache: "no-store",
+        });
+        if (res.status === 503) {
+          // Authed but Spotify token still propagating after OAuth.
+          // Re-poll fast and keep existing state so the card doesn't
+          // flicker to "Connecting…" between attempts.
+          if (!cancelled) timer = setTimeout(fetchOnce, 1000);
+          return;
+        }
+        const next: NowPlayingState = res.ok ? await res.json() : {};
         if (cancelled) return;
         setSnap({ state: next, fetchedAt: Date.now() });
       } catch {
         if (cancelled) return;
-        setSnap({ state: { authenticated: false }, fetchedAt: Date.now() });
+        setSnap({ state: {}, fetchedAt: Date.now() });
       }
       if (!cancelled) timer = setTimeout(fetchOnce, POLL_MS);
     }
 
+    function onVisibility() {
+      if (cancelled) return;
+      if (document.hidden) {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+      } else {
+        if (timer) clearTimeout(timer);
+        fetchOnce();
+      }
+    }
+
     fetchOnce();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
@@ -70,32 +101,21 @@ export default function NowPlaying() {
     );
   }
 
-  if (!state.authenticated) {
-    return (
-      <a
-        href="/api/auth/login"
-        className="group inline-flex w-fit items-center gap-2.5 rounded-full bg-[var(--brand)] px-7 py-3.5 text-sm font-bold tracking-wide text-black shadow-[0_0_0_0_rgba(30,215,96,0)] transition-all hover:scale-[1.03] hover:bg-[var(--brand-hover)] hover:shadow-[0_0_30px_0_rgba(30,215,96,0.35)] active:scale-[0.99] active:bg-[var(--brand-pressed)]"
-      >
-        <SpotifyGlyph />
-        Connect Spotify
-      </a>
-    );
-  }
-
   if (!state.isPlaying || !state.track) {
     return (
       <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-[var(--surface)] px-5 py-4 text-sm text-[var(--muted)]">
         <span className="inline-block h-2 w-2 rounded-full bg-[var(--subtle)]" />
-        Nothing playing right now. Press play in Spotify and this will light up.
+        Nothing playing right now.
       </div>
     );
   }
 
   const t = state.track;
   const elapsedSinceFetch = snap ? Date.now() - snap.fetchedAt : 0;
+  const baseProgress = state.progressMs ?? 0;
   const interpolatedMs = state.isPlaying
-    ? Math.min(t.durationMs, t.progressMs + elapsedSinceFetch)
-    : t.progressMs;
+    ? Math.min(t.durationMs, baseProgress + elapsedSinceFetch)
+    : baseProgress;
   const pct = t.durationMs > 0 ? (interpolatedMs / t.durationMs) * 100 : 0;
   const fmt = (ms: number) => {
     const s = Math.floor(ms / 1000);
@@ -111,7 +131,7 @@ export default function NowPlaying() {
         aria-hidden
         className="pointer-events-none absolute -left-10 top-1/2 h-32 w-32 -translate-y-1/2 rounded-full bg-[var(--brand)]/20 blur-2xl"
       />
-      {t.album.image && (
+      {t.album?.image && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={t.album.image}
@@ -131,7 +151,7 @@ export default function NowPlaying() {
         </div>
         <div className="truncate text-sm text-[var(--muted)]">
           {t.artists.map((a) => a.name).join(", ")}
-          {t.album.name ? ` · ${t.album.name}` : ""}
+          {t.album?.name ? ` · ${t.album.name}` : ""}
         </div>
         <div className="mt-3 flex items-center gap-2 text-[10px] tabular-nums text-[var(--muted)]">
           <span>{fmt(interpolatedMs)}</span>
@@ -148,15 +168,3 @@ export default function NowPlaying() {
   );
 }
 
-function SpotifyGlyph() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden
-      className="h-4 w-4"
-      fill="currentColor"
-    >
-      <path d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24zm5.521 17.34a.748.748 0 0 1-1.03.249c-2.823-1.724-6.376-2.114-10.561-1.158a.748.748 0 1 1-.333-1.46c4.581-1.045 8.515-.594 11.676 1.34.351.214.464.674.248 1.029zm1.473-3.267a.935.935 0 0 1-1.286.308c-3.231-1.987-8.156-2.563-11.978-1.402a.935.935 0 1 1-.542-1.79c4.366-1.323 9.794-.679 13.498 1.598.44.27.582.847.308 1.286zm.13-3.403c-3.876-2.302-10.27-2.514-13.97-1.39a1.122 1.122 0 1 1-.65-2.148c4.244-1.286 11.302-1.038 15.764 1.612.534.317.71 1.008.394 1.541a1.122 1.122 0 0 1-1.538.385z" />
-    </svg>
-  );
-}

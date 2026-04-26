@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Unbounded } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,9 +12,34 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Wordmark / display font for the "Lyra" brand and big headlines.
+// Unbounded is a quirky, geometric display sans — readable at small sizes
+// but distinctive in heavier weights.
+const unbounded = Unbounded({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: ["500", "700", "800"],
+});
+
 export const metadata: Metadata = {
-  title: "Listening Web",
-  description: "A 3D starfield of your Spotify listening history",
+  title: "Lyra",
+  description:
+    "Lyra — your Spotify listening history as a 3D starfield, with live now-playing overlay.",
+  applicationName: "Lyra",
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#050d09",
+  viewportFit: "cover" as const,
 };
 
 // Spotify OAuth requires `127.0.0.1` (not `localhost`) since Nov 2025.
@@ -35,7 +60,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${unbounded.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: LOCALHOST_REDIRECT }} />

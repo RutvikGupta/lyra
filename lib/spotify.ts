@@ -1,10 +1,43 @@
 import { cookies } from "next/headers";
 
 export const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
+// Optional. When set, OAuth runs as a confidential client (Basic auth on
+// /api/token). PKCE still protects the redirect leg, but adding the secret
+// makes Spotify treat the client as confidential, which means refresh
+// tokens issued via this flow are long-lived and DO NOT rotate on every
+// refresh — critical for showcase mode surviving server restarts and
+// Vercel cold starts.
+export const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET ?? "";
 export const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI!;
 export const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";
 export const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 export const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
+
+// Build the token-endpoint auth headers + body fields. With a client
+// secret we use HTTP Basic; without it (PKCE-only) the client_id goes in
+// the body. Same shape works for both authorization_code exchange and
+// refresh_token grants.
+export function tokenAuth(): {
+  headers: Record<string, string>;
+  bodyClientId: Record<string, string>;
+} {
+  if (SPOTIFY_CLIENT_SECRET) {
+    const basic = Buffer.from(
+      `${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`,
+    ).toString("base64");
+    return {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${basic}`,
+      },
+      bodyClientId: {},
+    };
+  }
+  return {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    bodyClientId: { client_id: SPOTIFY_CLIENT_ID },
+  };
+}
 
 export const SCOPES = [
   "user-read-currently-playing",
@@ -34,22 +67,48 @@ export type SpotifyTokens = {
   scope: string;
 };
 
+export type RefreshResult =
+  | { kind: "ok"; tokens: SpotifyTokens }
+  | { kind: "invalid"; reason: string } // refresh token permanently invalid (revoked/expired)
+  | { kind: "transient" }; // network/5xx — caller may retry later
+
 export async function refreshAccessToken(
   refreshToken: string,
-): Promise<SpotifyTokens | null> {
+): Promise<RefreshResult> {
+  const auth = tokenAuth();
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
-    client_id: SPOTIFY_CLIENT_ID,
+    ...auth.bodyClientId,
   });
-  const res = await fetch(SPOTIFY_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    cache: "no-store",
-  });
-  if (!res.ok) return null;
-  return res.json();
+  let res: Response;
+  try {
+    res = await fetch(SPOTIFY_TOKEN_URL, {
+      method: "POST",
+      headers: auth.headers,
+      body,
+      cache: "no-store",
+    });
+  } catch {
+    return { kind: "transient" };
+  }
+  if (res.ok) {
+    return { kind: "ok", tokens: (await res.json()) as SpotifyTokens };
+  }
+  // 4xx from the token endpoint means the refresh token itself is bad
+  // (invalid_grant, invalid_client). Tell the caller it's permanently
+  // dead so cookies / env vars can be cleared instead of retried.
+  if (res.status >= 400 && res.status < 500) {
+    let reason = "invalid_grant";
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) reason = body.error;
+    } catch {
+      // ignore — keep default reason
+    }
+    return { kind: "invalid", reason };
+  }
+  return { kind: "transient" };
 }
 
 // In-memory access token cache, keyed by refresh token.
@@ -57,6 +116,11 @@ export async function refreshAccessToken(
 // Halves API calls vs. refreshing on every request.
 type CachedToken = { accessToken: string; expiresAt: number };
 const tokenCache = new Map<string, CachedToken>();
+// Singleflight per refresh token: when multiple concurrent requests need
+// to refresh the same token, they all await the same network call.
+// Without this, two requests can race the rotation and the second hits
+// invalid_grant on an already-rotated token.
+const inflightRefreshes = new Map<string, Promise<string | null>>();
 
 export async function getAccessToken(): Promise<string | null> {
   const store = await cookies();
@@ -69,26 +133,61 @@ export async function getAccessToken(): Promise<string | null> {
     return cached.accessToken;
   }
 
-  const tokens = await refreshAccessToken(refresh);
-  if (!tokens) return null;
+  const existing = inflightRefreshes.get(refresh);
+  if (existing) return existing;
 
-  const expiresAt = now + tokens.expires_in * 1000;
+  const promise = (async (): Promise<string | null> => {
+    const result = await refreshAccessToken(refresh);
+    if (result.kind === "invalid") {
+      // Spotify says the refresh token is permanently dead (revoked, app
+      // unauthorized, etc.). Drop the cookie so subsequent requests
+      // behave as unauthenticated and fall back to showcase data instead
+      // of looping on 503.
+      tokenCache.delete(refresh);
+      try {
+        store.delete(REFRESH_COOKIE);
+      } catch {
+        // cookies().delete() can throw in read-only contexts (e.g.
+        // Server Components without a response). Ignore — the next
+        // route handler will retry and clear it where it can.
+      }
+      return null;
+    }
+    if (result.kind === "transient") return null;
 
-  if (tokens.refresh_token && tokens.refresh_token !== refresh) {
-    tokenCache.delete(refresh);
-    tokenCache.set(tokens.refresh_token, {
-      accessToken: tokens.access_token,
-      expiresAt,
-    });
-    store.set(REFRESH_COOKIE, tokens.refresh_token, REFRESH_COOKIE_OPTS);
-  } else {
-    tokenCache.set(refresh, {
-      accessToken: tokens.access_token,
-      expiresAt,
-    });
-  }
+    const tokens = result.tokens;
+    const expiresAt = Date.now() + tokens.expires_in * 1000;
 
-  return tokens.access_token;
+    if (tokens.refresh_token && tokens.refresh_token !== refresh) {
+      tokenCache.delete(refresh);
+      tokenCache.set(tokens.refresh_token, {
+        accessToken: tokens.access_token,
+        expiresAt,
+      });
+      store.set(REFRESH_COOKIE, tokens.refresh_token, REFRESH_COOKIE_OPTS);
+    } else {
+      tokenCache.set(refresh, {
+        accessToken: tokens.access_token,
+        expiresAt,
+      });
+    }
+    return tokens.access_token;
+  })().finally(() => {
+    inflightRefreshes.delete(refresh);
+  });
+
+  inflightRefreshes.set(refresh, promise);
+  return promise;
+}
+
+// Cheap check for "has the visitor connected at least once" — peek at the
+// refresh cookie without doing a token exchange. Used by route handlers to
+// decide whether a failed personal fetch should fall back to showcase data
+// (no cookie → fall back) or surface the error (cookie present → don't
+// silently swap them onto someone else's data).
+export async function hasAuthSession(): Promise<boolean> {
+  const store = await cookies();
+  return !!store.get(REFRESH_COOKIE)?.value;
 }
 
 export async function spotifyFetch(

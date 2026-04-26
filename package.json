@@ -1,5 +1,5 @@
 {
-  "name": "spotify-web",
+  "name": "lyra",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@types/three": "^0.184.0",
+    "@vercel/blob": "^2.3.3",
     "fflate": "^0.8.2",
     "idb-keyval": "^6.2.2",
     "next": "16.2.4",

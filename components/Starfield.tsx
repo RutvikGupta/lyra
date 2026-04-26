@@ -6,10 +6,22 @@ import * as THREE from "three";
 import {
   aggregateTopArtists,
   aggregateTopArtistsFromPlays,
+  aggregateTopTracksFromPlays,
 } from "@/lib/aggregate";
-import { buildArtistGraph, type GraphLink, type GraphNode } from "@/lib/graph";
+import { clusterColor, detectClusters } from "@/lib/cluster";
+import { nodeMatchesMoodFilter } from "@/lib/moods";
+import { computeCoplayMatrix, topCoplayed, type CoplayMatrix } from "@/lib/coplay";
+import {
+  buildArtistGraph,
+  buildTrackGraph,
+  type GraphLink,
+  type GraphNode,
+} from "@/lib/graph";
 import { loadHistory } from "@/lib/storage";
-import type { Criteria } from "./CriteriaBar";
+import type { Play } from "@/lib/types";
+import type { Criteria, LibraryCriteria } from "./CriteriaBar";
+import NodeList from "./NodeList";
+import TagsPanel from "./TagsPanel";
 
 const ForceGraph3D = dynamic(
   () => import("react-force-graph-3d").then((m) => m.default),
@@ -21,42 +33,111 @@ const ForceGraph3D = dynamic(
 
 type CurrentTrack = {
   name: string;
+  uri?: string;
   artists: { name: string; id: string }[];
   albumImage?: string;
 };
 
 const NOW_PLAYING_POLL_MS = 2000;
 
-export default function Starfield({ criteria }: { criteria: Criteria }) {
-  const [graph, setGraph] = useState<{
+// Coarse mobile detection — used to dial back mesh resolution and the
+// background starfield density. Lower-end mobile GPUs choke on the default
+// 24-segment node spheres and 5200-point starfield, so we halve both.
+function isLowPowerDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  const narrow = window.matchMedia?.("(max-width: 768px)").matches ?? false;
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  return narrow || coarse;
+}
+
+type SharedSnapshot = {
+  ownerName?: string;
+  topTracks: {
+    uri?: string;
+    name: string;
+    artistName: string;
+    albumName?: string;
+    playCount: number;
+    msPlayed: number;
+    firstPlayed?: number;
+  }[];
+  topArtists: {
+    name: string;
+    playCount: number;
+    msPlayed: number;
+    trackCount: number;
+  }[];
+  artistGenres: Record<string, string[]>;
+};
+
+export default function Starfield({
+  criteria,
+  onCriteriaChange,
+  sharedSnapshot,
+}: {
+  criteria: Criteria;
+  onCriteriaChange?: (next: Criteria) => void;
+  // When provided, library-mode renders directly from this snapshot
+  // (used by /share/[id]) instead of falling back to /api/showcase/library
+  // or IndexedDB.
+  sharedSnapshot?: SharedSnapshot;
+}) {
+  // rawGraph holds the unfiltered output of buildArtistGraph/buildTrackGraph.
+  // displayGraph is the version actually rendered, after Phase-B tag-filter
+  // + cluster-color transforms — recomputed cheaply when criteria change.
+  const [rawGraph, setRawGraph] = useState<{
     nodes: GraphNode[];
     links: GraphLink[];
   } | null>(null);
+  const [plays, setPlays] = useState<Play[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [showCoPlay, setShowCoPlay] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [currentTrack, setCurrentTrack] = useState<CurrentTrack | null>(null);
+  const [lowPower, setLowPower] = useState(false);
+  useEffect(() => {
+    setLowPower(isLowPowerDevice());
+  }, []);
 
-  // Stringify the criteria for the dep array — primitive comparison.
-  const criteriaKey = JSON.stringify(criteria);
+  // We re-fetch / re-build the raw graph only when criteria fields that
+  // affect the *underlying data* change (source, year, sort, limit, time-A
+  // filters). Tags + colorMode are display-only — they apply post-build.
+  const dataKey =
+    criteria.kind === "api"
+      ? `api:${criteria.timeRange}`
+      : `lib:${criteria.nodeType}:${criteria.year}:${criteria.sortBy}:${criteria.limit}:${criteria.timeOfDay.join(",")}:${criteria.dayOfWeek}:${criteria.sessionEntry}:${criteria.lovedOnly}:${criteria.skipBucket}:${criteria.discoveryYear}`;
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setGraph(null);
+      setRawGraph(null);
       setError(null);
       try {
         let items: unknown[] = [];
 
         if (criteria.kind === "api") {
-          const r = await fetch(
-            `/api/top?type=artists&time_range=${criteria.timeRange}`,
-            { cache: "no-store" },
-          );
+          // Retry on 503 — the route returns that during the post-OAuth
+          // token-propagation window so we don't silently serve showcase
+          // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
+          const RETRY_DELAYS = [1000, 2000, 4000];
+          let attempt = 0;
+          let r: Response;
+          while (true) {
+            r = await fetch(
+              `/api/top?type=artists&time_range=${criteria.timeRange}`,
+              { cache: "no-store" },
+            );
+            if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
+            await new Promise((resolve) =>
+              setTimeout(resolve, RETRY_DELAYS[attempt++]),
+            );
+            if (cancelled) return;
+          }
           if (r.status === 401) {
             if (!cancelled)
               setError(
@@ -72,47 +153,214 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
           if (cancelled) return;
           items = data.items ?? [];
         } else {
-          const history = await loadHistory();
+          const history = sharedSnapshot ? null : await loadHistory();
           if (cancelled) return;
+          if (history?.plays?.length) setPlays(history.plays);
+
+          // Visitor-fallback chain:
+          //   sharedSnapshot prop (passed by /share/[id]) →
+          //   /api/showcase/library (the owner's published snapshot)
+          // Capability is the same in both paths — pre-aggregated tracks
+          // + per-track firstPlayed for the Discovered filter, no raw
+          // plays for time-of-day filtering.
           if (!history || history.plays.length === 0) {
-            setError(
-              "No uploaded history found. Drop your Spotify ZIP on the upload page first.",
+            let snap: SharedSnapshot | null = sharedSnapshot ?? null;
+            if (!snap) {
+              const sr = await fetch("/api/showcase/library", {
+                cache: "no-store",
+              });
+              if (sr.status === 404) {
+                if (!cancelled)
+                  setError(
+                    "No uploaded history found. Drop your Spotify ZIP on the upload page first.",
+                  );
+                return;
+              }
+              if (!sr.ok) {
+                if (!cancelled)
+                  setError(`Showcase library fetch failed (${sr.status})`);
+                return;
+              }
+              snap = (await sr.json()) as SharedSnapshot;
+              if (cancelled) return;
+            }
+
+            const artistGenres = new Map<string, string[]>(
+              Object.entries(snap.artistGenres),
             );
+
+            if (criteria.nodeType === "artists") {
+              // Use `lib:{name}` IDs to match /api/library-artists so the
+              // now-playing pulse finds the right node (the matcher
+              // queries this exact key form).
+              const items = snap.topArtists
+                .slice(0, criteria.limit)
+                .map((a, i) => ({
+                  id: `lib:${a.name.toLowerCase()}`,
+                  rank: i + 1,
+                  name: a.name,
+                  genres: artistGenres.get(a.name.toLowerCase()) ?? [],
+                  popularity: 0,
+                  myPlayCount: a.playCount,
+                  myMsPlayed: a.msPlayed,
+                }));
+              const g = buildArtistGraph(items, criteria.sortBy);
+              setRawGraph(g);
+              return;
+            }
+
+            // Snapshot tracks include firstPlayed → we can honor the
+            // Discovered-year filter even without raw plays.
+            let snapTracks = snap.topTracks;
+            if (criteria.discoveryYear !== "all") {
+              snapTracks = snapTracks.filter(
+                (t) =>
+                  typeof t.firstPlayed === "number" &&
+                  new Date(t.firstPlayed).getUTCFullYear() ===
+                    criteria.discoveryYear,
+              );
+            }
+            const trackInputs = snapTracks
+              .slice(0, criteria.limit)
+              .map((t, i) => ({
+                uri: t.uri,
+                rank: i + 1,
+                name: t.name,
+                artistName: t.artistName,
+                albumName: t.albumName,
+                playCount: t.playCount,
+                msPlayed: t.msPlayed,
+              }));
+            if (trackInputs.length === 0) {
+              setError(
+                `No tracks discovered${
+                  criteria.discoveryYear !== "all"
+                    ? ` in ${criteria.discoveryYear}`
+                    : ""
+                }.`,
+              );
+              return;
+            }
+            const g = buildTrackGraph(
+              trackInputs,
+              artistGenres,
+              criteria.sortBy,
+            );
+            setRawGraph(g);
             return;
           }
-          const top =
-            criteria.year === "all" && criteria.sortBy === "msPlayed"
-              ? aggregateTopArtists(history.artists, criteria.limit)
-              : aggregateTopArtistsFromPlays(history.plays, {
-                  year: criteria.year,
-                  sortBy: criteria.sortBy,
-                  limit: criteria.limit,
-                });
-          if (top.length === 0) {
+
+          // Any active phase-A filter forces play-level recompute (the
+          // pre-aggregated history.artists won't reflect them).
+          const hasFilters =
+            criteria.timeOfDay.length > 0 ||
+            criteria.dayOfWeek !== "all" ||
+            criteria.sessionEntry !== "all";
+
+          if (criteria.nodeType === "artists") {
+            const top =
+              criteria.year === "all" &&
+              criteria.sortBy === "msPlayed" &&
+              !hasFilters
+                ? aggregateTopArtists(history.artists, criteria.limit)
+                : aggregateTopArtistsFromPlays(history.plays, {
+                    year: criteria.year,
+                    sortBy: criteria.sortBy,
+                    limit: criteria.limit,
+                    timeOfDay: criteria.timeOfDay,
+                    dayOfWeek: criteria.dayOfWeek,
+                    sessionEntry: criteria.sessionEntry,
+                  });
+            if (top.length === 0) {
+              setError(
+                `No plays found${criteria.year !== "all" ? ` in ${criteria.year}` : ""}.`,
+              );
+              return;
+            }
+            const r = await fetch("/api/library-artists", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ artists: top }),
+              cache: "no-store",
+            });
+            if (!r.ok) {
+              if (!cancelled) setError(`Library enrichment failed (${r.status})`);
+              return;
+            }
+            const data = await r.json();
+            if (cancelled) return;
+            items = data.items ?? [];
+            const g = buildArtistGraph(
+              items as Parameters<typeof buildArtistGraph>[0],
+              criteria.sortBy,
+            );
+            setRawGraph(g);
+            return;
+          }
+
+          // Track mode: aggregate top tracks, enrich their unique artists,
+          // build track graph using artist → genres mapping.
+          const topTracks = aggregateTopTracksFromPlays(history.plays, {
+            year: criteria.year,
+            sortBy: criteria.sortBy,
+            limit: criteria.limit,
+            timeOfDay: criteria.timeOfDay,
+            dayOfWeek: criteria.dayOfWeek,
+            sessionEntry: criteria.sessionEntry,
+            lovedOnly: criteria.lovedOnly,
+            skipBucket: criteria.skipBucket,
+            discoveryYear: criteria.discoveryYear,
+          });
+          if (topTracks.length === 0) {
             setError(
               `No plays found${criteria.year !== "all" ? ` in ${criteria.year}` : ""}.`,
             );
             return;
           }
+          const uniqueArtists = Array.from(
+            new Set(topTracks.map((t) => t.artistName)),
+          ).map((name) => ({
+            name,
+            playCount: 1,
+            msPlayed: 0,
+            trackCount: 0,
+          }));
           const r = await fetch("/api/library-artists", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ artists: top }),
+            body: JSON.stringify({ artists: uniqueArtists }),
             cache: "no-store",
           });
           if (!r.ok) {
             if (!cancelled) setError(`Library enrichment failed (${r.status})`);
             return;
           }
-          const data = await r.json();
+          const data = (await r.json()) as {
+            items: { name: string; genres: string[] }[];
+          };
           if (cancelled) return;
-          items = data.items ?? [];
+          const artistGenres = new Map<string, string[]>();
+          for (const a of data.items ?? []) {
+            artistGenres.set(a.name.toLowerCase(), a.genres ?? []);
+          }
+          const trackInputs = topTracks.map((t, i) => ({
+            uri: t.uri,
+            rank: i + 1,
+            name: t.name,
+            artistName: t.artistName,
+            albumName: t.albumName,
+            playCount: t.playCount,
+            msPlayed: t.msPlayed,
+          }));
+          const g = buildTrackGraph(trackInputs, artistGenres, criteria.sortBy);
+          setRawGraph(g);
+          return;
         }
 
         const g = buildArtistGraph(
           items as Parameters<typeof buildArtistGraph>[0],
         );
-        setGraph(g);
+        setRawGraph(g);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
@@ -122,7 +370,124 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [criteriaKey]);
+  }, [dataKey]);
+
+  // Derive the displayed graph from rawGraph + display-only criteria.
+  // Critical: we MUST NOT clone node objects here. d3-force-3d resolves
+  // each link's `source` / `target` from string IDs to node references on
+  // the first tick and mutates the link in place. If we hand it a parallel
+  // set of recolored node clones, the edges stay attached to the old refs
+  // while the recolored clones get a fresh layout — visually, edges
+  // collapse into a knot in the center while the nodes scatter outside.
+  // So filtering returns subset arrays of the *same* references, and
+  // cluster coloring is applied at render time via a Map override.
+  const libCriteria = criteria.kind === "library" ? criteria : null;
+  const { graph, clusterOverride, clusterInfo } = useMemo(() => {
+    if (!rawGraph)
+      return { graph: null, clusterOverride: null, clusterInfo: null };
+    const tags = libCriteria?.tags ?? [];
+    const colorMode = libCriteria?.colorMode ?? "genre";
+
+    let nodes = rawGraph.nodes;
+    let links = rawGraph.links;
+
+    const moods = libCriteria?.moods ?? [];
+    if (tags.length > 0 || moods.length > 0) {
+      const wanted = new Set(tags);
+      const keep = new Set<string>();
+      nodes = rawGraph.nodes.filter((n) => {
+        // Tag filter — any-match. Empty array passes everyone.
+        let tagOK = wanted.size === 0;
+        if (!tagOK) {
+          for (const g of n.genres) {
+            if (wanted.has(g)) {
+              tagOK = true;
+              break;
+            }
+          }
+        }
+        if (!tagOK) return false;
+        // Mood filter — node passes if any of its tags maps to any
+        // selected mood (substring match against the mood keyword list).
+        if (!nodeMatchesMoodFilter(n.genres, moods)) return false;
+        keep.add(n.id);
+        return true;
+      });
+      links = rawGraph.links.filter((l) => {
+        const s = typeof l.source === "string" ? l.source : (l.source as { id: string }).id;
+        const t = typeof l.target === "string" ? l.target : (l.target as { id: string }).id;
+        return keep.has(s) && keep.has(t);
+      });
+    }
+
+    let clusterOverride: Map<string, string> | null = null;
+    let clusterInfo:
+      | { label: string; color: string; count: number }[]
+      | null = null;
+    if (colorMode === "cluster" && nodes.length > 0) {
+      const clusters = detectClusters(nodes, links);
+      clusterOverride = new Map();
+      // Tally tag frequencies per cluster so we can name each cluster by
+      // its most common Last.fm tag — gives the legend semantic labels
+      // ("indie", "trap", "pop") instead of meaningless numbers.
+      const tagsByCluster = new Map<number, Map<string, number>>();
+      const sizeByCluster = new Map<number, number>();
+      for (const n of nodes) {
+        const cid = clusters.get(n.id) ?? 0;
+        clusterOverride.set(n.id, clusterColor(cid));
+        sizeByCluster.set(cid, (sizeByCluster.get(cid) ?? 0) + 1);
+        let tally = tagsByCluster.get(cid);
+        if (!tally) {
+          tally = new Map();
+          tagsByCluster.set(cid, tally);
+        }
+        for (const g of n.genres) {
+          tally.set(g, (tally.get(g) ?? 0) + 1);
+        }
+      }
+      clusterInfo = Array.from(sizeByCluster.entries())
+        .map(([cid, count]) => {
+          const tally = tagsByCluster.get(cid);
+          let topTag = "—";
+          let topCount = 0;
+          if (tally) {
+            for (const [tag, c] of tally) {
+              if (c > topCount) {
+                topCount = c;
+                topTag = tag;
+              }
+            }
+          }
+          return {
+            label: topTag,
+            color: clusterColor(cid),
+            count,
+          };
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
+    }
+
+    return { graph: { nodes, links }, clusterOverride, clusterInfo };
+  }, [rawGraph, libCriteria]);
+
+  // Lazy co-play matrix — built once when the user first opens the overlay,
+  // then cached for the lifetime of this Starfield mount. ~150ms for 50k
+  // plays in a benchmark, so we don't precompute on load.
+  const coplayMatrix = useMemo<CoplayMatrix | null>(() => {
+    if (!showCoPlay || !plays || plays.length === 0) return null;
+    return computeCoplayMatrix(plays);
+  }, [showCoPlay, plays]);
+
+  const coplayedForSelected = useMemo(() => {
+    if (!coplayMatrix || !selected) return [];
+    const top = topCoplayed(coplayMatrix, selected.id, 8);
+    if (!graph) return [];
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    return top
+      .map(({ id, count }) => ({ node: byId.get(id), count }))
+      .filter((x): x is { node: GraphNode; count: number } => !!x.node);
+  }, [coplayMatrix, selected, graph]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -135,11 +500,14 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
   }, []);
 
   // Poll now-playing so we can highlight the current artist in the graph.
+  // Pauses while the tab is hidden — no point polling the constellation
+  // when nobody's watching it.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function tick() {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const res = await fetch("/api/now-playing", { cache: "no-store" });
         if (cancelled) return;
@@ -152,6 +520,7 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
           if (data?.isPlaying && data?.track) {
             const next: CurrentTrack = {
               name: data.track.name,
+              uri: data.track.uri,
               artists: (
                 data.track.artists ??
                 ([] as { name: string; uri: string }[])
@@ -184,6 +553,18 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
       if (!cancelled) timer = setTimeout(tick, NOW_PLAYING_POLL_MS);
     }
 
+    function onVisibility() {
+      if (cancelled) return;
+      if (document.hidden) {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+      } else {
+        if (timer) clearTimeout(timer);
+        tick();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+
     tick();
     return () => {
       cancelled = true;
@@ -191,14 +572,24 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
     };
   }, []);
 
-  // Match the current track against the graph. API mode uses Spotify IDs;
-  // library mode uses synthetic `lib:{lowercase_name}` IDs. We populate both
-  // forms so a single node lookup works for either source.
+  // Match the current track against the graph. We compute every plausible
+  // ID form so a single node lookup works for any data source / node type:
+  //   - Spotify artist ID (API artist nodes)
+  //   - lib:{lowercase_name} (library artist nodes)
+  //   - spotify:track:... (library track nodes when we have the URI)
+  //   - track:{name}::{artist} (library track nodes without URI)
   const currentArtistIds = useMemo(() => {
     const keys = new Set<string>();
-    for (const a of currentTrack?.artists ?? []) {
+    if (!currentTrack) return keys;
+    for (const a of currentTrack.artists) {
       if (a.id) keys.add(a.id);
       if (a.name) keys.add(`lib:${a.name.toLowerCase()}`);
+    }
+    if (currentTrack.uri) keys.add(currentTrack.uri);
+    if (currentTrack.name && currentTrack.artists[0]?.name) {
+      keys.add(
+        `track:${currentTrack.name.toLowerCase()}::${currentTrack.artists[0].name.toLowerCase()}`,
+      );
     }
     return keys;
   }, [currentTrack]);
@@ -207,6 +598,15 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
     () => graph?.nodes.find((n) => currentArtistIds.has(n.id)) ?? null,
     [graph, currentArtistIds],
   );
+
+  // O(1) node lookup by ID — used by linkColor while d3-force is still
+  // resolving link source/target from string IDs into node refs (the first
+  // few frames after a graph swap).
+  const nodeById = useMemo(() => {
+    const m = new Map<string, GraphNode>();
+    if (graph) for (const n of graph.nodes) m.set(n.id, n);
+    return m;
+  }, [graph]);
 
   // react-force-graph-3d caches node materials/geometry per node and only
   // re-evaluates color/size callbacks on refresh. Force one whenever the
@@ -223,42 +623,67 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
     const scene = graphRef.current?.scene?.();
     if (!scene) return;
 
-    const haloRadius = matchedNode.size * 1.6;
-    const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(haloRadius, 24, 24),
+    const matchedVal = matchedNode.size * 2.5;
+    const NODE_REL_SIZE = 10;
+    const renderedRadius = NODE_REL_SIZE * Math.cbrt(matchedVal);
+
+    // Inner pulse — sharp, close-in glow visible at any zoom.
+    const inner = new THREE.Mesh(
+      new THREE.SphereGeometry(renderedRadius * 2.2, 32, 32),
       new THREE.MeshBasicMaterial({
         color: 0x1ed760,
         transparent: true,
-        opacity: 0.35,
+        opacity: 0.45,
         side: THREE.BackSide,
         depthWrite: false,
       }),
     );
-    halo.name = "now-playing-halo";
-    halo.raycast = () => {};
-    scene.add(halo);
+    inner.name = "now-playing-halo-inner";
+    inner.raycast = () => {};
+    scene.add(inner);
+
+    // Outer beacon — much larger, very faint glow that stays visible when
+    // the camera is zoomed out far. Same world-space scaling so it always
+    // dwarfs the node, no matter the distance.
+    const outer = new THREE.Mesh(
+      new THREE.SphereGeometry(renderedRadius * 8, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x1ed760,
+        transparent: true,
+        opacity: 0.15,
+        side: THREE.BackSide,
+        depthWrite: false,
+      }),
+    );
+    outer.name = "now-playing-halo-outer";
+    outer.raycast = () => {};
+    scene.add(outer);
 
     let rafId = 0;
     let cancelled = false;
     const animate = () => {
       if (cancelled) return;
       const t = Date.now() / 350;
-      const scale = 1.1 + 0.35 * Math.sin(t);
-      halo.scale.setScalar(scale);
-      const mat = halo.material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.18 + 0.22 * (0.5 + 0.5 * Math.sin(t));
-      // Track the live node position — the force layout keeps mutating
-      // x/y/z on the same node reference.
+      const sinT = Math.sin(t);
+      // Inner pulses in scale + opacity for the "close-up" beat.
+      inner.scale.setScalar(1.0 + 0.35 * sinT);
+      (inner.material as THREE.MeshBasicMaterial).opacity =
+        0.3 + 0.25 * (0.5 + 0.5 * sinT);
+      // Outer breathes more slowly and stays soft for distant visibility.
+      outer.scale.setScalar(0.9 + 0.25 * Math.sin(t * 0.6));
+      (outer.material as THREE.MeshBasicMaterial).opacity =
+        0.1 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.6));
+
       const positioned = matchedNode as GraphNode & {
         x?: number;
         y?: number;
         z?: number;
       };
-      halo.position.set(
-        positioned.x ?? 0,
-        positioned.y ?? 0,
-        positioned.z ?? 0,
-      );
+      const x = positioned.x ?? 0;
+      const y = positioned.y ?? 0;
+      const z = positioned.z ?? 0;
+      inner.position.set(x, y, z);
+      outer.position.set(x, y, z);
       rafId = requestAnimationFrame(animate);
     };
     animate();
@@ -266,9 +691,12 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
     return () => {
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
-      scene.remove(halo);
-      halo.geometry.dispose();
-      (halo.material as THREE.Material).dispose();
+      scene.remove(inner);
+      scene.remove(outer);
+      inner.geometry.dispose();
+      outer.geometry.dispose();
+      (inner.material as THREE.Material).dispose();
+      (outer.material as THREE.Material).dispose();
     };
   }, [graph, matchedNode]);
 
@@ -298,28 +726,100 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
     return () => clearTimeout(id);
   }, [graph]);
 
-  // Inject a real starfield (THREE.Points) into the underlying scene so the
-  // background isn't just flat black — gives the constellation a sky to live in.
+  // Spread the cluster out: bump link distance + node repulsion. Applied
+  // via onEngineTick (rather than a useEffect) so we *know* the simulation
+  // is alive — tuning forces before the engine is built was crashing with
+  // "Cannot read properties of undefined (reading 'tick')".
+  const tunedForGraphRef = useRef<{
+    nodes: GraphNode[];
+    links: GraphLink[];
+  } | null>(null);
   useEffect(() => {
-    if (!graph) return;
-    const id = setTimeout(() => {
-      const scene = graphRef.current?.scene?.();
-      if (!scene || scene.getObjectByName("starfield")) return;
-      const stars = createStarfield();
-      stars.name = "starfield";
-      scene.add(stars);
-      // Push the camera far plane out so the distant star shell isn't clipped.
-      const camera = graphRef.current?.camera?.();
-      if (camera && camera.far < 5000) {
-        camera.far = 5000;
-        camera.updateProjectionMatrix();
-      }
-    }, 0);
-    return () => clearTimeout(id);
+    tunedForGraphRef.current = null;
   }, [graph]);
 
+  const tuneForcesOnce = () => {
+    if (!graph || tunedForGraphRef.current === graph) return;
+    const fg = graphRef.current;
+    const linkForce = fg?.d3Force?.("link");
+    const chargeForce = fg?.d3Force?.("charge");
+    if (!linkForce || !chargeForce) return;
+
+    const n = graph.nodes.length;
+    // Compact tuning — pull connected nodes tighter and dampen long-range
+    // repulsion so clusters stay packed. Values are roughly half the
+    // previous spread; ~sqrt(n) growth keeps larger libraries from
+    // collapsing into a single ball.
+    const linkDistance = Math.round(140 + Math.sqrt(n) * 18);
+    const chargeStrength = -(380 + n * 5);
+    try {
+      linkForce.distance(linkDistance);
+      if (typeof linkForce.strength === "function") {
+        // Stronger spring → connected nodes pull in tighter.
+        linkForce.strength(0.32);
+      }
+      chargeForce.strength(chargeStrength);
+      // Cap repulsion reach so distant clusters don't push each other
+      // apart across the canvas.
+      if (typeof chargeForce.distanceMax === "function") {
+        chargeForce.distanceMax(550);
+      }
+      // Stronger centering so the constellation occupies a smaller
+      // volume — keeps it readable without zooming.
+      const centerForce = fg.d3Force?.("center");
+      if (centerForce && typeof centerForce.strength === "function") {
+        centerForce.strength(0.85);
+      }
+      tunedForGraphRef.current = graph;
+    } catch {
+      // Engine state mid-transition; let the next tick retry.
+    }
+  };
+
+  // Inject a real starfield (THREE.Points) into the underlying scene so the
+  // background isn't just flat black. On first load ForceGraph3D's scene
+  // isn't ready yet (it's dynamic-imported and async-initialized), so we
+  // retry on a short interval until scene() resolves.
+  useEffect(() => {
+    if (!graph) return;
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 60; // ~3s worth of retries
+
+    const tryAdd = () => {
+      if (cancelled) return;
+      const scene = graphRef.current?.scene?.();
+      if (scene) {
+        if (!scene.getObjectByName("starfield")) {
+          const stars = createStarfield(lowPower);
+          stars.name = "starfield";
+          scene.add(stars);
+        }
+        const camera = graphRef.current?.camera?.();
+        if (camera && camera.far < 5000) {
+          camera.far = 5000;
+          camera.updateProjectionMatrix();
+        }
+        return;
+      }
+      if (++attempts < maxAttempts) {
+        setTimeout(tryAdd, 50);
+      }
+    };
+    tryAdd();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [graph, lowPower]);
+
   const detail = selected ?? hovered;
-  const genreCounts = graph ? topGenres(graph.nodes) : [];
+  // Memoize the genre tally so we don't recompute on every render — it
+  // only changes when the displayed graph changes.
+  const genreCounts = useMemo(
+    () => (graph ? topGenres(graph.nodes) : []),
+    [graph],
+  );
 
   return (
     <div
@@ -355,30 +855,41 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
           nodeLabel={(n: object) => (n as GraphNode).name}
           nodeColor={(n: object) => {
             const node = n as GraphNode;
-            return currentArtistIds.has(node.id)
-              ? "#1ed760" // brand green for the now-playing artist
-              : node.color;
+            // Now-playing node keeps its native genre/cluster color — the
+            // halo + size scale-up are sufficient highlight without losing
+            // its position in the colormap.
+            return clusterOverride?.get(node.id) ?? node.color;
           }}
           nodeVal={(n: object) => {
             const node = n as GraphNode;
-            return currentArtistIds.has(node.id) ? node.size * 4 : node.size;
+            return currentArtistIds.has(node.id) ? node.size * 2.5 : node.size;
           }}
-          nodeOpacity={0.95}
-          // Bump sphere segment count from default 8 → 24 for visibly smoother
-          // nodes (still ~negligible perf hit at <500 nodes).
-          nodeResolution={24}
+          nodeOpacity={1}
+          // nodeRelSize is the visual scale multiplier — radius = nodeRelSize
+          // × cbrt(nodeVal). Default 4 was too small; 10 makes nodes feel
+          // properly weighted in the scene.
+          nodeRelSize={10}
+          // Sphere segment count: 24 on desktop for smooth shading, 14 on
+          // low-power devices to avoid mobile-GPU jank with 150+ nodes.
+          nodeResolution={lowPower ? 14 : 24}
           linkColor={(l: object) => {
-            // After force layout source/target become full node refs.
+            // Source/target may be string IDs (early frames before d3-force
+            // resolves them) or full node refs (after). Resolve via the
+            // nodeById map so edges paint with the right cluster color from
+            // frame 1 instead of starting white and recoloring 5s later.
             const link = l as { source: GraphNode | string };
-            return typeof link.source === "object"
-              ? link.source.color
-              : "rgba(255,255,255,0.6)";
+            const source =
+              typeof link.source === "object"
+                ? link.source
+                : nodeById.get(link.source);
+            if (!source) return "rgba(255,255,255,0.45)";
+            return clusterOverride?.get(source.id) ?? source.color;
           }}
           linkOpacity={0.55}
           linkWidth={(l: object) => {
-            const shared = (l as GraphLink).shared;
-            // shared=1 → 0.6, shared=3 → 1.6, shared=5+ → cap at 3
-            return Math.min(3, 0.4 + shared * 0.5);
+            const link = l as GraphLink;
+            // Width by Jaccard similarity (0.35..1.0) → 1.5..4 px range.
+            return 1.5 + link.jaccard * 2.5;
           }}
           linkLabel={(l: object) => {
             const link = l as Omit<GraphLink, "source" | "target"> & {
@@ -412,6 +923,7 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
           }
           onNodeClick={(n: object) => setSelected(n as GraphNode)}
           onBackgroundClick={() => setSelected(null)}
+          onEngineTick={tuneForcesOnce}
         />
         </div>
       )}
@@ -421,11 +933,56 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
           node={detail}
           pinned={!!selected}
           onClose={() => setSelected(null)}
+          coplayed={selected && detail.id === selected.id ? coplayedForSelected : []}
+          onCoplayedSelect={(n) => {
+            setSelected(n);
+            if (graphRef.current) focusOnNode(graphRef.current, n);
+          }}
         />
       )}
 
-      {graph && genreCounts.length > 0 && (
-        <GenreLegend counts={genreCounts} />
+      {graph &&
+        (clusterInfo && clusterInfo.length > 0 ? (
+          <ColorLegend title="Clusters" items={clusterInfo} />
+        ) : genreCounts.length > 0 ? (
+          <ColorLegend
+            title="Top genres"
+            items={genreCounts.map((c) => ({
+              label: c.genre,
+              color: c.color,
+              count: c.count,
+            }))}
+          />
+        ) : null)}
+
+      {graph && (
+        <NodeList
+          nodes={graph.nodes}
+          selectedId={selected?.id}
+          onSelect={(n) => {
+            setSelected(n);
+            if (graphRef.current) focusOnNode(graphRef.current, n);
+          }}
+          sortLabel={
+            libCriteria
+              ? libCriteria.sortBy === "msPlayed"
+                ? "Total time"
+                : "Total plays"
+              : criteria.kind === "api"
+                ? "Spotify rank"
+                : undefined
+          }
+        />
+      )}
+
+      {rawGraph && libCriteria && onCriteriaChange && (
+        <TagsPanel
+          rawNodes={rawGraph.nodes}
+          criteria={libCriteria}
+          onChange={(next) => onCriteriaChange(next)}
+          showCoPlay={showCoPlay}
+          onShowCoPlayChange={setShowCoPlay}
+        />
       )}
 
       {currentTrack && (
@@ -444,14 +1001,14 @@ export default function Starfield({ criteria }: { criteria: Criteria }) {
   );
 }
 
-function createStarfield(): THREE.Group {
+function createStarfield(lowPower: boolean): THREE.Group {
   const group = new THREE.Group();
-  // Bright stars — fewer but larger
-  group.add(makeStarLayer(700, 2.0, 0.95, 0xffffff));
-  // Mid stars — medium
-  group.add(makeStarLayer(1500, 1.2, 0.7, 0xeaf2ff));
-  // Dim stars — many small
-  group.add(makeStarLayer(3000, 0.7, 0.4, 0xc0d0ff));
+  // Halve the star count on low-power devices — the visual loss is barely
+  // perceptible at 2000m radius, but mobile GPUs love it.
+  const m = lowPower ? 0.4 : 1;
+  group.add(makeStarLayer(Math.round(700 * m), 2.0, 0.95, 0xffffff));
+  group.add(makeStarLayer(Math.round(1500 * m), 1.2, 0.7, 0xeaf2ff));
+  group.add(makeStarLayer(Math.round(3000 * m), 0.7, 0.4, 0xc0d0ff));
   return group;
 }
 
@@ -514,11 +1071,29 @@ function NowPlayingPill({
   matchedNodeName?: string;
   onFocus?: () => void;
 }) {
+  const clickable = matched && !!onFocus;
+  const handleClick = clickable ? onFocus : undefined;
   return (
     <div
-      className={`absolute bottom-4 right-4 flex max-w-sm items-center gap-3 rounded-2xl border bg-black/85 p-3 backdrop-blur-xl transition-colors ${
+      onClick={handleClick}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onFocus();
+              }
+            }
+          : undefined
+      }
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      title={
+        clickable ? `Focus on ${matchedNodeName ?? "match"}` : undefined
+      }
+      className={`absolute bottom-4 right-4 z-50 flex max-w-sm items-center gap-3 rounded-2xl border bg-black/85 p-3 backdrop-blur-xl transition-all ${
         matched
-          ? "border-[var(--brand)]/40 shadow-[0_0_30px_-8px_rgba(30,215,96,0.5)]"
+          ? "cursor-pointer border-[var(--brand)]/40 shadow-[0_0_30px_-8px_rgba(30,215,96,0.5)] hover:scale-[1.02] hover:border-[var(--brand)]/70 hover:shadow-[0_0_40px_-6px_rgba(30,215,96,0.7)] active:scale-[0.99]"
           : "border-white/[0.08]"
       }`}
     >
@@ -546,16 +1121,12 @@ function NowPlayingPill({
           {track.artists.map((a) => a.name).join(", ")}
         </div>
         {matched ? (
-          <button
-            onClick={onFocus}
-            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--brand)] hover:underline"
-          >
-            ✦ In your top 50 — focus on{" "}
-            {matchedNodeName ?? "match"}
-          </button>
+          <div className="mt-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--brand)]">
+            ✦ In graph — click to focus on {matchedNodeName ?? "match"}
+          </div>
         ) : (
           <div className="mt-1.5 text-[10px] uppercase tracking-wider text-[var(--subtle)]">
-            Not in your top 50
+            Not in current view
           </div>
         )}
       </div>
@@ -578,11 +1149,21 @@ function NodeDetails({
   node,
   pinned,
   onClose,
+  coplayed,
+  onCoplayedSelect,
 }: {
   node: GraphNode;
   pinned: boolean;
   onClose: () => void;
+  coplayed: { node: GraphNode; count: number }[];
+  onCoplayedSelect: (n: GraphNode) => void;
 }) {
+  const isTrack = !!node.artistName;
+  const myHours =
+    typeof node.myMsPlayed === "number"
+      ? node.myMsPlayed / 1000 / 60 / 60
+      : 0;
+
   return (
     <div className="absolute right-4 top-20 max-w-xs rounded-2xl border border-white/[0.08] bg-black/85 p-4 shadow-2xl backdrop-blur-xl">
       <div className="flex items-start gap-3">
@@ -595,21 +1176,40 @@ function NodeDetails({
           />
         ) : (
           <div
-            className="h-14 w-14 flex-shrink-0 rounded-full"
+            className={`h-14 w-14 flex-shrink-0 ${
+              isTrack ? "rounded-md" : "rounded-full"
+            }`}
             style={{ background: node.color }}
           />
         )}
         <div className="min-w-0 flex-1">
           <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--brand)]">
-            Rank #{node.rank}
+            {isTrack ? "Track" : "Artist"} · #{node.rank}
           </div>
           <div className="truncate text-base font-bold text-white">
             {node.name}
           </div>
-          <div className="text-xs capitalize text-[var(--muted)]">
-            {node.primaryGenre}
-          </div>
-          {(node.listeners > 0 || node.playcount > 0) && (
+          {isTrack ? (
+            <div className="truncate text-xs text-[var(--muted)]">
+              {node.artistName}
+              {node.albumName ? ` · ${node.albumName}` : ""}
+            </div>
+          ) : (
+            <div className="text-xs capitalize text-[var(--muted)]">
+              {node.primaryGenre}
+            </div>
+          )}
+          {isTrack && (node.myPlayCount ?? 0) > 0 && (
+            <div className="mt-1 flex gap-3 text-[10px] tabular-nums text-[var(--subtle)]">
+              <span>{node.myPlayCount} plays</span>
+              <span>
+                {myHours >= 1
+                  ? `${myHours.toFixed(1)} hrs`
+                  : `${Math.round((node.myMsPlayed ?? 0) / 60000)} min`}
+              </span>
+            </div>
+          )}
+          {!isTrack && (node.listeners > 0 || node.playcount > 0) && (
             <div className="mt-1 flex gap-3 text-[10px] tabular-nums text-[var(--subtle)]">
               {node.listeners > 0 && (
                 <span>{formatCount(node.listeners)} listeners</span>
@@ -636,13 +1236,42 @@ function NodeDetails({
           ))}
         </div>
       )}
+      {coplayed.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1">
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--brand)]">
+            Often co-played with
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {coplayed.slice(0, 5).map(({ node: n, count }) => (
+              <li key={n.id}>
+                <button
+                  type="button"
+                  onClick={() => onCoplayedSelect(n)}
+                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.06]"
+                >
+                  <span
+                    className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                    style={{ background: n.color }}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white">
+                    {n.name}
+                    {n.artistName && (
+                      <span className="text-[var(--muted)]"> · {n.artistName}</span>
+                    )}
+                  </span>
+                  <span className="flex-shrink-0 text-[10px] tabular-nums text-[var(--subtle)]">
+                    {count}×
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="mt-3 flex items-center justify-between gap-2">
         <a
-          href={
-            node.id.startsWith("lib:")
-              ? `https://open.spotify.com/search/${encodeURIComponent(node.name)}`
-              : `https://open.spotify.com/artist/${node.id}`
-          }
+          href={spotifyUrlFor(node)}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--brand)] px-3 py-1.5 text-[11px] font-bold text-black transition-colors hover:bg-[var(--brand-hover)]"
@@ -661,6 +1290,23 @@ function NodeDetails({
       </div>
     </div>
   );
+}
+
+function spotifyUrlFor(node: GraphNode): string {
+  // Track node with a real Spotify URI — direct deep link.
+  if (node.trackUri && node.trackUri.startsWith("spotify:track:")) {
+    return `https://open.spotify.com/track/${node.trackUri.replace("spotify:track:", "")}`;
+  }
+  // Track node without URI — search for "track artist".
+  if (node.artistName) {
+    return `https://open.spotify.com/search/${encodeURIComponent(`${node.name} ${node.artistName}`)}`;
+  }
+  // Library artist (synthetic id) — search by name.
+  if (node.id.startsWith("lib:")) {
+    return `https://open.spotify.com/search/${encodeURIComponent(node.name)}`;
+  }
+  // API artist — direct deep link.
+  return `https://open.spotify.com/artist/${node.id}`;
 }
 
 function SpotifyGlyph() {
@@ -700,24 +1346,28 @@ function topGenres(
     .slice(0, 8);
 }
 
-function GenreLegend({
-  counts,
+function ColorLegend({
+  title,
+  items,
 }: {
-  counts: { genre: string; count: number; color: string }[];
+  title: string;
+  items: { label: string; count: number; color: string }[];
 }) {
   return (
-    <div className="absolute bottom-4 left-4 flex flex-col gap-1.5 rounded-2xl border border-white/[0.08] bg-black/70 px-4 py-3 text-xs backdrop-blur-md">
-      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
-        Top genres
+    <div className="overlay-card absolute bottom-4 left-4 flex flex-col gap-1.5 rounded-2xl border border-white/[0.08] px-4 py-3 text-[13px] backdrop-blur-md">
+      <div className="text-[12px] font-bold uppercase tracking-[0.18em] text-white/75">
+        {title}
       </div>
-      {counts.map((c) => (
-        <div key={c.genre} className="flex items-center gap-2">
+      {items.map((c, i) => (
+        <div key={`${c.label}-${i}`} className="flex items-center gap-2">
           <span
-            className="inline-block h-2 w-2 rounded-full"
+            className="inline-block h-2.5 w-2.5 rounded-full"
             style={{ background: c.color }}
           />
-          <span className="text-white">{c.genre}</span>
-          <span className="ml-auto text-[var(--muted)]">{c.count}</span>
+          <span className="font-medium capitalize text-white">{c.label}</span>
+          <span className="ml-auto font-semibold tabular-nums text-[var(--muted)]">
+            {c.count}
+          </span>
         </div>
       ))}
     </div>

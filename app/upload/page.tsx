@@ -3,12 +3,12 @@ import UploadZone from "@/components/UploadZone";
 
 export default function UploadPage() {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
+    <div className="relative min-h-screen overflow-hidden text-white">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 opacity-50"
+        className="pointer-events-none absolute inset-0 -z-10"
       >
-        <div className="aurora absolute -top-40 left-1/2 h-[40rem] w-[40rem] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,#1ed76055,transparent_70%)] blur-3xl" />
+        <div className="aurora absolute -top-40 left-1/2 h-[40rem] w-[40rem] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,#1ed76066,transparent_70%)] blur-3xl" />
       </div>
 
       <main className="relative mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-10 px-6 py-14 sm:px-10">
@@ -17,10 +17,10 @@ export default function UploadPage() {
             href="/"
             className="text-sm font-medium text-[var(--muted)] transition-colors hover:text-white"
           >
-            ← Listening Web
+            ← Lyra
           </Link>
           <span className="text-xs uppercase tracking-[0.18em] text-[var(--subtle)]">
-            Phase 2 · Your data
+            Your streaming history
           </span>
         </nav>
 

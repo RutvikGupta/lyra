@@ -1,20 +1,19 @@
 import Link from "next/link";
 import ExploreView from "@/components/ExploreView";
+import ShowcaseOwnerBanner from "@/components/ShowcaseOwnerBanner";
 
 export default function ExplorePage() {
   return (
     <div className="relative h-screen overflow-hidden bg-black text-white">
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between p-5 sm:p-6">
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center p-5 sm:p-6">
         <Link
           href="/"
-          className="text-sm font-medium text-[var(--muted)] transition-colors hover:text-white"
+          className="overlay-tab inline-flex items-center gap-1 rounded-full border border-white/10 px-3.5 py-2 text-[13px] font-bold text-white/85 backdrop-blur-md transition-colors hover:text-white"
         >
-          ← Listening Web
+          ← Lyra
         </Link>
-        <div className="rounded-full border border-white/10 bg-black/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-[var(--muted)] backdrop-blur">
-          Phase 4 · Explore
-        </div>
       </header>
+      <ShowcaseOwnerBanner scope="explore" />
       <ExploreView />
     </div>
   );

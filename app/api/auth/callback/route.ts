@@ -2,11 +2,13 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
   REFRESH_COOKIE,
-  SPOTIFY_CLIENT_ID,
+  SPOTIFY_API_BASE,
+  SPOTIFY_CLIENT_SECRET,
   SPOTIFY_REDIRECT_URI,
   SPOTIFY_TOKEN_URL,
   STATE_COOKIE,
   VERIFIER_COOKIE,
+  tokenAuth,
 } from "@/lib/spotify";
 
 export async function GET(req: Request) {
@@ -26,21 +28,29 @@ export async function GET(req: Request) {
       new URL(`/?error=${encodeURIComponent(error)}`, req.url),
     );
   }
-  if (!code || !verifier || !state || state !== expectedState) {
+  // PKCE branch needs the verifier; plain (confidential) flow doesn't.
+  const usingPkce = !SPOTIFY_CLIENT_SECRET;
+  if (
+    !code ||
+    !state ||
+    state !== expectedState ||
+    (usingPkce && !verifier)
+  ) {
     return NextResponse.redirect(new URL(`/?error=invalid_callback`, req.url));
   }
 
+  const auth = tokenAuth();
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
     redirect_uri: SPOTIFY_REDIRECT_URI,
-    client_id: SPOTIFY_CLIENT_ID,
-    code_verifier: verifier,
+    ...(usingPkce && verifier ? { code_verifier: verifier } : {}),
+    ...auth.bodyClientId,
   });
 
   const res = await fetch(SPOTIFY_TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: auth.headers,
     body,
     cache: "no-store",
   });
@@ -52,7 +62,31 @@ export async function GET(req: Request) {
     );
   }
 
-  const tokens = (await res.json()) as { refresh_token: string };
+  const tokens = (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+  };
+
+  // Verify the access token actually works against the Spotify API before
+  // committing the refresh cookie + redirecting. Catches cases where the
+  // token exchange "succeeded" but the user account isn't on the dev-mode
+  // allowlist (Spotify returns valid tokens but every API call 403s).
+  //
+  // Spotify's token issuance + CDN propagation has a small lag (200-500ms),
+  // so we retry transient failures up to 4 times with backoff before
+  // declaring the connection broken.
+  const verifyResult = await verifyToken(tokens.access_token);
+  if (!verifyResult.ok) {
+    const status = verifyResult.status;
+    const reason =
+      status === 403
+        ? "not_on_allowlist"
+        : status === 401
+          ? "token_invalid"
+          : `verify_${status}`;
+    return NextResponse.redirect(new URL(`/?error=${reason}`, req.url));
+  }
+
   store.set(REFRESH_COOKIE, tokens.refresh_token, {
     httpOnly: true,
     sameSite: "lax",
@@ -62,4 +96,32 @@ export async function GET(req: Request) {
   });
 
   return NextResponse.redirect(new URL("/", req.url));
+}
+
+async function verifyToken(
+  accessToken: string,
+): Promise<{ ok: boolean; status: number }> {
+  // Backoff schedule: 0, 250, 500, 1000ms — tolerates Spotify's typical
+  // post-issuance propagation lag without delaying success in the common
+  // case where the first call works.
+  const delays = [0, 250, 500, 1000];
+  let lastStatus = 0;
+  for (const delay of delays) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(`${SPOTIFY_API_BASE}/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      if (res.ok) return { ok: true, status: res.status };
+      lastStatus = res.status;
+      // 401/403 are deterministic — no point retrying. Bail immediately.
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, status: res.status };
+      }
+    } catch {
+      // Network blip — retry.
+    }
+  }
+  return { ok: false, status: lastStatus };
 }

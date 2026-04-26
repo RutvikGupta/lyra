@@ -18,28 +18,51 @@ export default function RecentlyPlayed() {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // Right after OAuth, Spotify's access-token issuance can lag a few
+    // seconds — the API returns 503 with `retrying:true` in that window.
+    // Retry on a short backoff (1s, 2s, 4s) so the section populates
+    // automatically instead of requiring a manual refresh.
+    const RETRY_DELAYS = [1000, 2000, 4000];
+    let retryIdx = 0;
+
     async function load() {
       try {
         const r = await fetch("/api/recently-played", { cache: "no-store" });
-        if (r.status === 401) {
-          if (!cancelled) {
-            setAuthed(false);
+        if (r.status === 503) {
+          // Schedule a retry; don't clear existing items.
+          if (!cancelled && retryIdx < RETRY_DELAYS.length) {
+            retryTimer = setTimeout(load, RETRY_DELAYS[retryIdx++]);
+          } else if (!cancelled && items === null) {
             setItems([]);
           }
           return;
         }
+        if (!r.ok) {
+          if (!cancelled) setItems([]);
+          return;
+        }
         const data = await r.json();
-        if (!cancelled) setItems(data.items ?? []);
+        if (!cancelled) {
+          setItems(data.items ?? []);
+          retryIdx = 0; // reset for the next poll cycle
+        }
       } catch {
-        if (!cancelled) setItems([]);
+        if (!cancelled) setItems((prev) => prev ?? []);
       }
     }
     load();
-    const id = setInterval(load, 60_000);
+    // 5-min poll matches the showcase route's TTL — no point hammering.
+    const id = setInterval(load, 5 * 60_000);
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (retryTimer) clearTimeout(retryTimer);
     };
+    // items intentionally omitted — we only read it inside `load`, which
+    // gets the latest value on every invocation. Including it would tear
+    // down + recreate the interval on every state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!authed) return null;

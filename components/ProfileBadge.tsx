@@ -29,7 +29,24 @@ export default function ProfileBadge() {
     };
   }, []);
 
-  if (!profile?.authenticated || !profile.name) return null;
+  // Probe still pending — render nothing rather than flickering between
+  // "Connect" and "you're signed in" on first paint.
+  if (profile === null) return null;
+
+  // Unauthed visitor (or owner who hasn't connected yet): show the connect
+  // button so the owner can wire up the showcase refresh token, and so
+  // visitors can hop straight into /upload after auth if they want their
+  // own data.
+  if (!profile.authenticated || !profile.name) {
+    return (
+      <a
+        href="/api/auth/login"
+        className="inline-flex items-center gap-2 rounded-full bg-[var(--brand)] px-4 py-2 text-sm font-bold text-black transition-transform hover:scale-[1.03] active:scale-[0.99]"
+      >
+        Connect Spotify
+      </a>
+    );
+  }
 
   const inner = (
     <div className="flex items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-1 pr-3 text-sm transition-colors hover:bg-white/[0.08]">

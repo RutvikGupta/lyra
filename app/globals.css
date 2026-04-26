@@ -25,16 +25,51 @@
   --color-brand-pressed: var(--brand-pressed);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display-family: var(--font-display);
 }
 
 html,
 body {
-  background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* iOS Safari: disable text-size auto-inflate inside our fixed-layout
+     pages, and inhibit pull-to-refresh on full-canvas pages. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+  /* Allow native pinch-zoom but stop double-tap zoom on UI controls. */
+  touch-action: manipulation;
+}
+
+/* Spotify-themed dark green gradient backdrop. Sits behind page content
+   on /, /upload. Canvas pages (/explore, /library) override with their
+   own bg-black so the WebGL view stays pure black. Applied to html too
+   so rubber-band overscroll shows green, not black. */
+html,
+body {
+  background-color: #000000;
+  background-image:
+    radial-gradient(
+      ellipse 70% 35% at 50% 0%,
+      rgba(30, 215, 96, 0.38),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 60% 60% at 100% 100%,
+      rgba(30, 215, 96, 0.14),
+      transparent 70%
+    ),
+    linear-gradient(180deg, #050a07 0%, #020403 25%, #000000 50%);
+  background-attachment: fixed;
+}
+
+html {
+  /* Prevent the white/black rubber-band by tinting the overscroll zones
+     to match the gradient endpoints. */
+  background-color: #000000;
 }
 
 /* Spotify-style hairline scrollbar */
@@ -70,6 +105,16 @@ body {
 }
 .aurora {
   animation: aurora 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora {
+    animation: none;
+  }
+  .live-dot {
+    animation: none;
+  }
 }
 
 @keyframes pulse-ring {
@@ -85,4 +130,84 @@ body {
 }
 .live-dot {
   animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Lyra wordmark — display font with subtle letter-spacing for the harp
+   string feel. Pair with text-[var(--brand)] or white at the call site. */
+.lyra-wordmark {
+  font-family: var(--font-display), var(--font-geist-sans), sans-serif;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+}
+
+/* Floating overlays sitting on top of the 3D canvas. Pure black/X
+   blends into the starfield; a subtle green-tinted gradient gives them
+   depth and ties them to the brand without becoming visually heavy. */
+.overlay-tab {
+  background-image: linear-gradient(
+    135deg,
+    rgba(30, 215, 96, 0.10) 0%,
+    rgba(15, 28, 22, 0.85) 45%,
+    rgba(0, 0, 0, 0.88) 100%
+  );
+}
+.overlay-card {
+  background-image: linear-gradient(
+    150deg,
+    rgba(30, 215, 96, 0.08) 0%,
+    rgba(12, 22, 18, 0.92) 35%,
+    rgba(0, 0, 0, 0.92) 100%
+  );
+  box-shadow:
+    0 10px 40px -12px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Vega — the brightest star in the Lyra constellation — pulses softly so
+   the mark feels alive. transform-box:fill-box pins the scale origin to
+   Vega's actual center inside the SVG. */
+@keyframes vega-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.65);
+    opacity: 0.8;
+  }
+}
+.vega-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vega-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vega-pulse {
+    animation: none;
+  }
+}
+
+/* Bottom-anchored toast slide-in (used by the share-link confirmation).
+   The toast lives inside a full-width centering wrapper, so this only
+   handles the vertical slide + fade. No horizontal transform here —
+   keeping it off the keyframe avoids fighting the wrapper's flex-center
+   layout. */
+@keyframes lyra-toast-up {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.lyra-toast-up {
+  animation: lyra-toast-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lyra-toast-up {
+    animation: none;
+  }
 }
