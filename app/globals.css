@@ -140,6 +140,23 @@ html {
   font-weight: 700;
 }
 
+/* Extruded 3D text — used on the hero "3D" word so it physically looks
+   like what it describes. Brand-green shadow stack fading toward the
+   back, then a soft drop shadow to ground it against the dark
+   background. */
+.text-3d {
+  color: var(--brand);
+  text-shadow:
+    1px 1px 0 rgba(30, 215, 96, 0.85),
+    2px 2px 0 rgba(30, 215, 96, 0.70),
+    3px 3px 0 rgba(30, 215, 96, 0.55),
+    4px 4px 0 rgba(30, 215, 96, 0.42),
+    5px 5px 0 rgba(30, 215, 96, 0.30),
+    6px 6px 0 rgba(15, 80, 40, 0.85),
+    7px 7px 0 rgba(10, 50, 25, 0.85),
+    10px 10px 24px rgba(0, 0, 0, 0.55);
+}
+
 /* Floating overlays sitting on top of the 3D canvas. Pure black/X
    blends into the starfield; a subtle green-tinted gradient gives them
    depth and ties them to the brand without becoming visually heavy. */

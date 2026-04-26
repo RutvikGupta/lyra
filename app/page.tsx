@@ -68,13 +68,16 @@ export default async function Home({
           <h1 className="text-balance text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl sm:leading-[1] md:text-6xl xl:text-7xl">
             Your playlist,{" "}
             <span className="bg-gradient-to-br from-[var(--brand)] to-emerald-200 bg-clip-text text-transparent">
-              as a starfield.
+              Visualized in
+            </span>{" "}
+            <span aria-label="3D" className="text-3d">
+              3D
             </span>
           </h1>
           <p className="max-w-xl text-base leading-relaxed text-[var(--muted)] sm:text-lg">
-            A 3D starfield of every track you&apos;ve played, linked by genre
-            and listening session. The song you&apos;re playing right now lights
-            up the constellation.
+            Every track you&apos;ve played, artist you listened to, plotted
+            in a 3D web and interlinked by shared genre. Pulsates the song
+            or artist you are listening to currently.
           </p>
         </header>
 
@@ -226,13 +229,8 @@ export default async function Home({
           </div>
         </section>
 
-        <footer className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-10 text-xs text-[var(--subtle)]">
-          <span>Lyra · A 3D starfield of your listening</span>
-          <span aria-hidden>·</span>
-          <span>Your data stays in your browser</span>
-          <span aria-hidden>·</span>
-          <span>Built in Toronto by kivtur00</span>
-          <span aria-hidden>·</span>
+        <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-1 pt-10 text-xs text-[var(--subtle)]">
+          <span>Lyra © 2026 · Built in Toronto by kivtur00</span>
           <span>Not affiliated with Spotify</span>
         </footer>
       </main>

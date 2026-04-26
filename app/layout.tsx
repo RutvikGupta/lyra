@@ -22,9 +22,9 @@ const unbounded = Unbounded({
 });
 
 export const metadata: Metadata = {
-  title: "Lyra",
+  title: "Lyra — your playlist, visualized in 3D",
   description:
-    "Lyra — your Spotify listening history as a 3D starfield, with live now-playing overlay.",
+    "Every track you've played, artist you listened to, plotted in a 3D web and interlinked by shared genre. Pulsates the song or artist you are listening to currently.",
   applicationName: "Lyra",
   formatDetection: {
     telephone: false,
