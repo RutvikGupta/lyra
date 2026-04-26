@@ -27,12 +27,13 @@ export default function ExploreView({
   return (
     <>
       {share && (
-        // Right-side, stacked below "▶ Tags & color" (which is right-4
-        // top-3 in library mode). On /explore there's no Tags button,
-        // so the share button just sits alone in the same slot.
-        // Bottom-right is taken by NowPlayingPill, top-left by ← Lyra
-        // and the publish/banner row, top-center by the source toggle.
-        <div className="pointer-events-none absolute right-4 top-16 z-30 flex flex-wrap items-start gap-2 sm:top-20">
+        // Same y as ▶ Tags & color (which sits at right-4 top-3 sm:top-5),
+        // offset far enough left that even with the active-count badge
+        // there's no overlap. On /explore there's no Tags button, so the
+        // empty space to the left of where Tags would be is unused
+        // anyway. Avoids the top-16 right-4 zone where the node-info
+        // popup opens (top-20 right-4).
+        <div className="pointer-events-none absolute right-52 top-3 z-30 flex flex-wrap items-start gap-2 sm:right-60 sm:top-5">
           <ShareConstellationButton
             mode={share.mode}
             timeRange={shareTimeRange}
