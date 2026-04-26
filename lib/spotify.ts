@@ -218,6 +218,9 @@ function recordRateLimit(refresh: string, retryAfterSec: number) {
   // avoid a malformed header pinning us out for hours.
   const clamped = Math.max(1, Math.min(600, retryAfterSec || 30));
   cooldownByRefresh.set(refresh, Date.now() + clamped * 1000);
+  console.warn(
+    `[spotify] 429 — backing off for ${clamped}s before next call for this user`,
+  );
 }
 
 export async function spotifyFetch(

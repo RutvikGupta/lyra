@@ -1,4 +1,9 @@
-import { hasAuthSession } from "@/lib/spotify";
+import { cookies } from "next/headers";
+import {
+  hasAuthSession,
+  isRateLimitedFor,
+  REFRESH_COOKIE,
+} from "@/lib/spotify";
 import { fetchProfile, fetchShowcaseProfile } from "@/lib/spotify-api";
 
 export async function GET() {
@@ -12,7 +17,11 @@ export async function GET() {
     // it as "still logged in, data unavailable right now".
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
-      return Response.json({ authenticated: true });
+      const store = await cookies();
+      const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
+      // Surface rate-limit state so the client can render a chip.
+      const rateLimited = !!refresh && isRateLimitedFor(refresh);
+      return Response.json({ authenticated: true, rateLimited });
     }
     return Response.json({ authenticated: false }, { status: 401 });
   }

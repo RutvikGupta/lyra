@@ -1,4 +1,5 @@
 import ExploreView from "@/components/ExploreView";
+import RateLimitChip from "@/components/RateLimitChip";
 import ShowcaseOwnerBanner from "@/components/ShowcaseOwnerBanner";
 import SoftLink from "@/components/SoftLink";
 
@@ -15,6 +16,7 @@ export default function ExplorePage() {
       </header>
       <ShowcaseOwnerBanner scope="explore" />
       <ExploreView share={{ mode: "artists" }} />
+      <RateLimitChip />
     </div>
   );
 }

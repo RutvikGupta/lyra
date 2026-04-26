@@ -126,8 +126,11 @@ export async function spotifyShowcaseFetch(
     const retryAfter = Number(res.headers.get("Retry-After"));
     const sec = Number.isFinite(retryAfter) ? retryAfter : 30;
     // Clamp [1, 600] — same as personal-side cooldown.
-    state.rateLimitedUntil =
-      Date.now() + Math.max(1, Math.min(600, sec || 30)) * 1000;
+    const clamped = Math.max(1, Math.min(600, sec || 30));
+    state.rateLimitedUntil = Date.now() + clamped * 1000;
+    console.warn(
+      `[showcase] 429 — backing off for ${clamped}s before next showcase call`,
+    );
   }
   return res;
 }

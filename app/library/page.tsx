@@ -1,5 +1,6 @@
 import ExploreView from "@/components/ExploreView";
 import PublishShowcaseButton from "@/components/PublishShowcaseButton";
+import RateLimitChip from "@/components/RateLimitChip";
 import ShowcaseOwnerBanner from "@/components/ShowcaseOwnerBanner";
 import SoftLink from "@/components/SoftLink";
 
@@ -41,6 +42,7 @@ export default function LibraryPage() {
           moods: [],
         }}
       />
+      <RateLimitChip />
     </div>
   );
 }
