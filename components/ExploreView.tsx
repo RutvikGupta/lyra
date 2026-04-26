@@ -27,18 +27,12 @@ export default function ExploreView({
   return (
     <>
       {share && (
-        // Top-right corner — clear of ← Lyra (top-left), the centered
-        // source toggle / filter chips (top-center), and the
-        // ShowcaseOwnerBanner that occupies left-20 top-5 for visitors.
-        // In library mode, offset further left so we don't sit under
-        // the "▶ Tags & color" button (right-4 top-3, z-50).
-        <div
-          className={
-            share.mode === "library"
-              ? "pointer-events-none absolute right-44 top-5 z-30 flex flex-wrap items-start gap-2 sm:right-52 sm:top-6"
-              : "pointer-events-none absolute right-5 top-5 z-30 flex flex-wrap items-start gap-2 sm:right-6 sm:top-6"
-          }
-        >
+        // Right-side, stacked below "▶ Tags & color" (which is right-4
+        // top-3 in library mode). On /explore there's no Tags button,
+        // so the share button just sits alone in the same slot.
+        // Bottom-right is taken by NowPlayingPill, top-left by ← Lyra
+        // and the publish/banner row, top-center by the source toggle.
+        <div className="pointer-events-none absolute right-4 top-16 z-30 flex flex-wrap items-start gap-2 sm:top-20">
           <ShareConstellationButton
             mode={share.mode}
             timeRange={shareTimeRange}
