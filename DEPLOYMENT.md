@@ -95,8 +95,10 @@ tokens per environment.
 
 ## 6. Configure Vercel cron auth
 
-`vercel.json` already wires `/api/cron/refresh-showcase` to run every
-6 hours.
+`vercel.json` already wires `/api/cron/refresh-showcase` to run once
+daily at 06:00 UTC. (Hobby tier only allows daily-or-coarser cron
+schedules; on Pro you can drop it to `0 */6 * * *` for every-6-hour
+refreshes.)
 
 1. Vercel Dashboard → your project → **Settings → Cron Jobs** →
    the cron entry → **Edit**.
