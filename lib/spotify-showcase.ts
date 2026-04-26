@@ -24,6 +24,10 @@ type ShowcaseState = {
   cachedAccess: { token: string; expiresAt: number } | null;
   envTokenInvalid: boolean;
   inflightRefresh: Promise<string | null> | null;
+  // When Spotify returns 429 with a Retry-After header, we hold off
+  // outbound calls until this absolute time. Single-tenant — there's only
+  // one showcase token for the whole app.
+  rateLimitedUntil: number;
 };
 
 const g = globalThis as unknown as { __lyraShowcase?: ShowcaseState };
@@ -33,6 +37,7 @@ if (!g.__lyraShowcase) {
     cachedAccess: null,
     envTokenInvalid: false,
     inflightRefresh: null,
+    rateLimitedUntil: 0,
   };
 }
 const state = g.__lyraShowcase;
@@ -103,9 +108,13 @@ export async function spotifyShowcaseFetch(
   path: string,
   init?: RequestInit,
 ): Promise<Response | null> {
+  if (state.rateLimitedUntil > Date.now()) {
+    // Spotify told us to back off; honor it instead of earning more 429s.
+    return null;
+  }
   const token = await getShowcaseAccessToken();
   if (!token) return null;
-  return fetch(`${SPOTIFY_API_BASE}${path}`, {
+  const res = await fetch(`${SPOTIFY_API_BASE}${path}`, {
     ...init,
     headers: {
       ...init?.headers,
@@ -113,6 +122,14 @@ export async function spotifyShowcaseFetch(
     },
     cache: "no-store",
   });
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    const sec = Number.isFinite(retryAfter) ? retryAfter : 30;
+    // Clamp [1, 600] — same as personal-side cooldown.
+    state.rateLimitedUntil =
+      Date.now() + Math.max(1, Math.min(600, sec || 30)) * 1000;
+  }
+  return res;
 }
 
 // Tiny in-memory response cache. Module-scope so Fluid Compute reuses the
@@ -150,4 +167,5 @@ export function resetShowcaseLatch() {
   state.cachedAccess = null;
   state.liveRefreshToken = null;
   state.inflightRefresh = null;
+  state.rateLimitedUntil = 0;
 }

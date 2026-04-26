@@ -95,8 +95,14 @@ export async function refreshAccessToken(
   if (res.ok) {
     return { kind: "ok", tokens: (await res.json()) as SpotifyTokens };
   }
-  // 4xx from the token endpoint means the refresh token itself is bad
-  // (invalid_grant, invalid_client). Tell the caller it's permanently
+  // 429 is rate-limiting, not a permanent token failure — never clear
+  // cookies / env vars in this case. Spotify's Retry-After applies; the
+  // caller's cooldown logic will handle the wait.
+  if (res.status === 429) {
+    return { kind: "transient" };
+  }
+  // Other 4xx from the token endpoint means the refresh token itself is
+  // bad (invalid_grant, invalid_client). Tell the caller it's permanently
   // dead so cookies / env vars can be cleared instead of retried.
   if (res.status >= 400 && res.status < 500) {
     let reason = "invalid_grant";
@@ -190,13 +196,42 @@ export async function hasAuthSession(): Promise<boolean> {
   return !!store.get(REFRESH_COOKIE)?.value;
 }
 
+// Cooldown map keyed by refresh token. When Spotify returns 429 with a
+// Retry-After header, we record the absolute time at which it's safe to
+// resume calls for that user. Subsequent calls during the window
+// short-circuit to null instead of hammering Spotify (and earning more
+// 429s, which can extend the window further).
+const cooldownByRefresh = new Map<string, number>();
+
+export function isRateLimitedFor(refresh: string): boolean {
+  const until = cooldownByRefresh.get(refresh);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    cooldownByRefresh.delete(refresh);
+    return false;
+  }
+  return true;
+}
+
+function recordRateLimit(refresh: string, retryAfterSec: number) {
+  // Clamp to [1, 600] — Spotify rarely sends > a few minutes, but cap to
+  // avoid a malformed header pinning us out for hours.
+  const clamped = Math.max(1, Math.min(600, retryAfterSec || 30));
+  cooldownByRefresh.set(refresh, Date.now() + clamped * 1000);
+}
+
 export async function spotifyFetch(
   path: string,
   init?: RequestInit,
 ): Promise<Response | null> {
+  const store = await cookies();
+  const refresh = store.get(REFRESH_COOKIE)?.value;
+  if (refresh && isRateLimitedFor(refresh)) {
+    return null;
+  }
   const token = await getAccessToken();
   if (!token) return null;
-  return fetch(`${SPOTIFY_API_BASE}${path}`, {
+  const res = await fetch(`${SPOTIFY_API_BASE}${path}`, {
     ...init,
     headers: {
       ...init?.headers,
@@ -204,4 +239,9 @@ export async function spotifyFetch(
     },
     cache: "no-store",
   });
+  if (res.status === 429 && refresh) {
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    recordRateLimit(refresh, Number.isFinite(retryAfter) ? retryAfter : 30);
+  }
+  return res;
 }
