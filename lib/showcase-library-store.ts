@@ -76,6 +76,7 @@ export async function writeSnapshot(snap: LibrarySnapshot): Promise<{
     const result = await put(PATHNAME, json, {
       access: "public",
       addRandomSuffix: false, // overwrite the same key each time
+      allowOverwrite: true, // @vercel/blob v2 requires this for re-puts
       contentType: "application/json",
       cacheControlMaxAge: 60,
     });
