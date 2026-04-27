@@ -1,4 +1,5 @@
-import { hasAuthSession } from "@/lib/spotify";
+import { cookies } from "next/headers";
+import { hasAuthSession, isRateLimitedFor, REFRESH_COOKIE } from "@/lib/spotify";
 import {
   enrichArtists,
   fetchShowcaseTopArtists,
@@ -62,15 +63,25 @@ export async function GET(req: Request) {
           items: shapeArtists(enriched),
         });
       }
-      // Authed but Spotify failed — could be revoked refresh token,
-      // post-OAuth lag, or rate-limiting on /me/top/artists. The earlier
-      // design returned 503 here so Starfield could retry with backoff,
-      // but a sustained 429 just exhausts the retry budget and surfaces
-      // "Failed (503)" on the constellation. Fall through to the
-      // showcase branch instead so the user sees kivtur00's graph
-      // rather than a hard error wall. The brief post-OAuth race window
-      // (showing showcase data for 1–2s before the user's data arrives
-      // on a refetch) is a fair trade for never failing hard.
+      // Authed but Spotify failed. Don't fall through to showcase here —
+      // that'd serve kivtur00's data to a logged-in non-owner, which is
+      // confusing. Instead return an empty personal response with
+      // rateLimited: true (when applicable) so the client can render the
+      // empty-graph state alongside the RateLimitChip explaining why.
+      // If the cookie was just cleared (invalid_grant), hasAuthSession
+      // is now false → fall through to the unauthed showcase branch.
+      const stillAuthed = await hasAuthSession();
+      if (stillAuthed) {
+        const store = await cookies();
+        const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
+        const rateLimited = !!refresh && isRateLimitedFor(refresh);
+        return Response.json({
+          authenticated: true,
+          source: "personal",
+          items: [],
+          rateLimited,
+        });
+      }
     }
 
     if (!showcaseConfigured()) {

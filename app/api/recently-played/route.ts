@@ -1,4 +1,9 @@
-import { hasAuthSession } from "@/lib/spotify";
+import { cookies } from "next/headers";
+import {
+  hasAuthSession,
+  isRateLimitedFor,
+  REFRESH_COOKIE,
+} from "@/lib/spotify";
 import { fetchRecentlyPlayed } from "@/lib/spotify-api";
 import {
   showcaseConfigured,
@@ -58,10 +63,14 @@ export async function GET() {
     // cleared; return 200 with an empty list if still authed (transient).
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
+      const store = await cookies();
+      const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
+      const rateLimited = !!refresh && isRateLimitedFor(refresh);
       return Response.json({
         authenticated: true,
         source: "personal",
         items: [],
+        rateLimited,
       });
     }
     // Cookie cleared → flow into the showcase branch below.

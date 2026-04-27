@@ -18,6 +18,14 @@ export default function RateLimitChip() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Hysteresis: require two consecutive rateLimited:true polls before
+    // showing the chip. Brief 429 blips during normal use (Spotify's
+    // rolling window briefly clipping a fast-polled endpoint) are
+    // self-correcting within a single poll interval and shouldn't
+    // surface as user-visible chrome. Sustained rate-limits last well
+    // beyond a single poll, so they still surface promptly. Clearing is
+    // immediate — the moment one poll says false, hide.
+    let confirmCount = 0;
 
     async function tick() {
       if (typeof document !== "undefined" && document.hidden) {
@@ -32,18 +40,28 @@ export default function RateLimitChip() {
         if (cancelled) return;
         if (r.ok) {
           const data = (await r.json()) as { rateLimited?: boolean };
-          setThrottled(!!data.rateLimited);
+          if (data.rateLimited) {
+            confirmCount += 1;
+            if (confirmCount >= 2) setThrottled(true);
+          } else {
+            confirmCount = 0;
+            setThrottled(false);
+          }
         } else {
           // Non-OK (401 = cookie cleared, 5xx = backend issue) — these
           // aren't rate-limit conditions, so clear the chip rather than
           // leaving it stuck on a stale `true`.
+          confirmCount = 0;
           setThrottled(false);
         }
       } catch {
         // Network failure — assume the chip's prior state is no longer
         // reliable; clear it. The next successful poll will set it again
         // if we're really still rate-limited.
-        if (!cancelled) setThrottled(false);
+        if (!cancelled) {
+          confirmCount = 0;
+          setThrottled(false);
+        }
       }
       if (!cancelled) timer = setTimeout(tick, 30_000);
     }

@@ -57,7 +57,11 @@ type CurrentTrack = {
   albumImage?: string;
 };
 
-const NOW_PLAYING_POLL_MS = 2000;
+// Constellation poll: 3s instead of 2s. The matched-node halo's pulse
+// looks the same either way; the saving is real (~30% fewer Spotify
+// hits per authed session) and helps stay under the rolling rate-limit
+// window. Pairs with the same change in NowPlaying.tsx on home page.
+const NOW_PLAYING_POLL_MS = 3000;
 
 // Coarse mobile detection — used to dial back mesh resolution and the
 // background starfield density. Lower-end mobile GPUs choke on the default

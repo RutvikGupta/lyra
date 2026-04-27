@@ -1,4 +1,10 @@
-import { hasAuthSession, spotifyFetch } from "@/lib/spotify";
+import { cookies } from "next/headers";
+import {
+  hasAuthSession,
+  isRateLimitedFor,
+  REFRESH_COOKIE,
+  spotifyFetch,
+} from "@/lib/spotify";
 import {
   showcaseConfigured,
   spotifyShowcaseFetch,
@@ -82,10 +88,14 @@ export async function GET() {
     //       "no track playing" state is a natural empty render.
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
+      const store = await cookies();
+      const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
+      const rateLimited = !!refresh && isRateLimitedFor(refresh);
       return Response.json({
         authenticated: true,
         source: "personal",
         isPlaying: false,
+        rateLimited,
       });
     }
     // Cookie was cleared → flow into the showcase branch below.

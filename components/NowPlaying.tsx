@@ -16,10 +16,14 @@ type NowPlayingState = {
 
 type Snapshot = { state: NowPlayingState; fetchedAt: number };
 
-// Polling cadence — kept tight so song changes show up within ~2s.
-// Server-side has its own dedupe cache (~1s) so this isn't a Spotify API
-// hammer; multiple visitor polls in the same second collapse to one.
-const POLL_MS = 1500;
+// Polling cadence. 1.5s was tight enough that authed sessions burned
+// ~40 req/min against /me/player/currently-playing — flirting with
+// Spotify's rolling-window throttle threshold for power users. Bumped
+// to 3s: still feels live (song changes surface within a few seconds)
+// but uses ~half the per-user request budget. Showcase visitors are
+// served from the 1s server-side dedupe cache anyway, so they don't
+// notice the change.
+const POLL_MS = 3000;
 const TICK_MS = 250;
 
 export default function NowPlaying() {

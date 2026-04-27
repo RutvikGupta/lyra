@@ -1,3 +1,4 @@
+import { hasAuthSession } from "@/lib/spotify";
 import { fetchProfile, fetchShowcaseProfile } from "@/lib/spotify-api";
 import type { LibrarySnapshot } from "@/lib/showcase-library";
 import { SNAPSHOT_VERSION } from "@/lib/showcase-library";
@@ -33,6 +34,19 @@ export async function POST(req: Request) {
     fetchShowcaseProfile(),
   ]);
   if (!visitor) {
+    // Distinguish between "not logged in" and "logged in but Spotify
+    // can't tell us who you are right now" (rate-limit). 401 makes the
+    // client think the session expired; 503 prompts a retry.
+    const stillAuthed = await hasAuthSession();
+    if (stillAuthed) {
+      return Response.json(
+        {
+          error: "rate_limited",
+          detail: "Spotify is rate-limiting your account; retry in a minute.",
+        },
+        { status: 503 },
+      );
+    }
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!owner) {
