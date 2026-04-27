@@ -16,14 +16,14 @@ type NowPlayingState = {
 
 type Snapshot = { state: NowPlayingState; fetchedAt: number };
 
-// Polling cadence. 1.5s was tight enough that authed sessions burned
-// ~40 req/min against /me/player/currently-playing — flirting with
-// Spotify's rolling-window throttle threshold for power users. Bumped
-// to 3s: still feels live (song changes surface within a few seconds)
-// but uses ~half the per-user request budget. Showcase visitors are
-// served from the 1s server-side dedupe cache anyway, so they don't
-// notice the change.
-const POLL_MS = 3000;
+// Polling cadence. The progress bar is locally interpolated (see
+// TICK_MS below): every 250ms we bump a counter so the bar re-renders
+// using `Date.now() - fetchedAt`, drifting smoothly forward without a
+// network call. That decouples server-poll frequency from visual
+// smoothness, so we can poll every 5s for actual track changes (down
+// from 1.5s, ~70% fewer requests against /me) without the bar ever
+// looking jumpy.
+const POLL_MS = 5000;
 const TICK_MS = 250;
 
 export default function NowPlaying() {
