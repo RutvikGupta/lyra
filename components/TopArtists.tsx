@@ -81,10 +81,16 @@ export default function TopArtists() {
         const data = await r.json();
         if (cancelled) return;
         const next = (data.items as Item[]) ?? [];
-        // Rate-limited response with no fresh items — keep the stale
-        // cached list rather than blanking. The RateLimitChip explains
-        // why the data isn't refreshing.
+        // Rate-limited with no fresh items — same problem as a 503: a
+        // brief throttle window. Keep items=null (loading state) and
+        // retry on the same backoff so a tab toggle doesn't show an
+        // "empty" flash. After we exhaust retries, fall back to the
+        // empty + rateLimited UI so the user sees *some* explanation.
         if (data.rateLimited && next.length === 0) {
+          if (!stale && retryIdx < RETRY_DELAYS.length) {
+            retryTimer = setTimeout(load, RETRY_DELAYS[retryIdx++]);
+            return;
+          }
           setRateLimited(true);
           if (!stale) setItems([]);
           return;

@@ -164,18 +164,42 @@ export default function Starfield({
               items = fresh;
             } else {
               const stale = readStaleCache<unknown[]>(cacheKey);
-              // Retry on 503 — the route returns that during the post-OAuth
-              // token-propagation window so we don't silently serve showcase
-              // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
+              // Retry on 503 (post-OAuth token propagation) AND on
+              // rate-limited+empty 200s (brief Spotify throttle window).
+              // Either way, if there's no cache to fall back on, the
+              // user would otherwise see an empty graph/CTA flash; a
+              // few seconds of backoff usually clears it.
               const RETRY_DELAYS = [1000, 2000, 4000];
               let attempt = 0;
               let r: Response;
+              let rateLimitedEmpty = false;
               while (true) {
                 r = await fetch(
                   `/api/top?type=artists&time_range=${criteria.timeRange}`,
                   { cache: "no-store" },
                 );
-                if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
+                rateLimitedEmpty = false;
+                if (r.status === 503) {
+                  if (attempt >= RETRY_DELAYS.length) break;
+                } else if (r.ok) {
+                  // Peek at the body to detect the rate-limited+empty
+                  // case. Clone so we can still .json() below.
+                  const peek = (await r.clone().json()) as {
+                    items?: unknown[];
+                    rateLimited?: boolean;
+                  };
+                  rateLimitedEmpty =
+                    !!peek.rateLimited && (peek.items?.length ?? 0) === 0;
+                  if (
+                    !rateLimitedEmpty ||
+                    !!stale ||
+                    attempt >= RETRY_DELAYS.length
+                  ) {
+                    break;
+                  }
+                } else {
+                  break;
+                }
                 await new Promise((resolve) =>
                   setTimeout(resolve, RETRY_DELAYS[attempt++]),
                 );
