@@ -49,7 +49,10 @@ export async function GET() {
   // returning. The cron still guarantees daily freshness as a floor.
   const baked = await readOwnerRecentlyFresh();
   if (baked && baked.items.length > 0) {
-    return Response.json({ items: baked.items });
+    return Response.json({
+      items: baked.items,
+      refreshedAt: baked.refreshedAt,
+    });
   }
   try {
     const payload = await withShowcaseCache("recently-played", TTL_MS, load);
