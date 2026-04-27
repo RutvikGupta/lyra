@@ -18,28 +18,35 @@ type Item = {
 };
 
 // Recently-played updates whenever the user finishes a track. 2 min
-// TTL keeps the list usefully fresh during an active listening
-// session — a typical pop song is ~3 min, so the list updates within
-// roughly one track's worth of latency without polling on a fixed
-// interval.
+// TTL keeps the list usefully fresh during an active listening session
+// — a typical pop song is ~3 min, so the list updates within roughly
+// one track's worth of latency. Polled on the same cadence so a user
+// with the tab open sees new tracks without manually refreshing.
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const POLL_MS = 2 * 60 * 1000;
 const CACHE_KEY = "lyra:recently-played";
 
 export default function RecentlyPlayed() {
   const [items, setItems] = useState<Item[] | null>(null);
   const [authed, setAuthed] = useState(true);
+  // Tick every 30s so "Xm ago" labels stay accurate between polls.
+  const [, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const fresh = readFreshCache<Item[]>(CACHE_KEY, CACHE_TTL);
-    if (fresh) {
-      setItems(fresh);
-      return;
+    const initialFresh = readFreshCache<Item[]>(CACHE_KEY, CACHE_TTL);
+    if (initialFresh) setItems(initialFresh);
+    else {
+      const stale = readStaleCache<Item[]>(CACHE_KEY);
+      if (stale) setItems(stale);
     }
-    const stale = readStaleCache<Item[]>(CACHE_KEY);
-    if (stale) setItems(stale);
 
     // Right after OAuth, Spotify's access-token issuance can lag a few
     // seconds — the API returns 503 with `retrying:true` in that window.
@@ -47,6 +54,12 @@ export default function RecentlyPlayed() {
     // automatically instead of requiring a manual refresh.
     const RETRY_DELAYS = [1000, 2000, 4000];
     let retryIdx = 0;
+    // Tracked so the rate-limited / error branches know whether they
+    // can fall back to a cached list. Read fresh inside `load` so each
+    // poll tick uses an up-to-date view of localStorage.
+    function currentStale(): Item[] | null {
+      return readStaleCache<Item[]>(CACHE_KEY);
+    }
 
     async function load() {
       try {
@@ -54,32 +67,68 @@ export default function RecentlyPlayed() {
         if (r.status === 503) {
           if (!cancelled && retryIdx < RETRY_DELAYS.length) {
             retryTimer = setTimeout(load, RETRY_DELAYS[retryIdx++]);
-          } else if (!cancelled && !stale) {
+          } else if (!cancelled && !currentStale()) {
             setItems([]);
           }
           return;
         }
         if (!r.ok) {
-          if (!cancelled && !stale) setItems([]);
+          if (!cancelled && !currentStale()) setItems([]);
           return;
         }
         const data = await r.json();
         if (cancelled) return;
         const next = (data.items as Item[]) ?? [];
         if (data.rateLimited && next.length === 0) {
-          if (!stale) setItems([]);
+          if (!currentStale()) setItems([]);
           return;
         }
         setItems(next);
         if (next.length > 0) writeCache(CACHE_KEY, next);
+        retryIdx = 0;
       } catch {
-        if (!cancelled && !stale) setItems([]);
+        if (!cancelled && !currentStale()) setItems([]);
       }
     }
-    load();
+
+    function schedulePoll() {
+      if (cancelled) return;
+      pollTimer = setTimeout(async () => {
+        if (cancelled) return;
+        if (typeof document !== "undefined" && document.hidden) {
+          // Pause polling on hidden tabs to avoid burning Spotify
+          // quota / battery. visibilitychange will re-arm.
+          schedulePoll();
+          return;
+        }
+        await load();
+        schedulePoll();
+      }, POLL_MS);
+    }
+
+    function onVisibility() {
+      if (cancelled) return;
+      if (!document.hidden) {
+        // Tab came back: refresh immediately if cache is past TTL,
+        // then re-arm the poll.
+        if (pollTimer) clearTimeout(pollTimer);
+        const stillFresh = readFreshCache<Item[]>(CACHE_KEY, CACHE_TTL);
+        if (!stillFresh) load();
+        schedulePoll();
+      }
+    }
+
+    // Skip the initial fetch when the cache is fresh — render-from-
+    // cache stays a zero-network path. Poll still arms so the list
+    // updates on cadence.
+    if (!initialFresh) load();
+    schedulePoll();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (pollTimer) clearTimeout(pollTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
