@@ -9,8 +9,47 @@ type Profile = {
   profileUrl?: string | null;
 };
 
+// Cache the last-known profile in localStorage so a rate-limited
+// /api/profile response (authenticated:true with no name) can still
+// render the user's name + avatar instead of falling back to a generic
+// "Connected" pill. Cleared when the server says we're unauthenticated.
+const CACHE_KEY = "lyra:profile";
+
+function readCache(): Profile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Profile;
+    if (!parsed?.authenticated) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(p: Profile) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(p));
+  } catch {
+    // quota / private mode — non-fatal
+  }
+}
+
+function clearCache() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function ProfileBadge() {
-  const [profile, setProfile] = useState<Profile | null>(null);
+  // Hydrate from cache so the second-and-later page loads render the
+  // name immediately, even if /api/profile is briefly rate-limited.
+  const [profile, setProfile] = useState<Profile | null>(() => readCache());
 
   useEffect(() => {
     let cancelled = false;
@@ -19,10 +58,28 @@ export default function ProfileBadge() {
         r.status === 401 ? { authenticated: false } : r.json(),
       )
       .then((p: Profile) => {
-        if (!cancelled) setProfile(p);
+        if (cancelled) return;
+        if (!p.authenticated) {
+          clearCache();
+          setProfile(p);
+          return;
+        }
+        if (p.name) {
+          // Fresh, complete profile — write through to cache and render.
+          writeCache(p);
+          setProfile(p);
+          return;
+        }
+        // Authed-but-no-name (rate-limited). Prefer the cached profile
+        // if we have one so the badge keeps the user's name + avatar
+        // instead of regressing to "Connected".
+        const cached = readCache();
+        setProfile(cached ?? p);
       })
       .catch(() => {
-        if (!cancelled) setProfile({ authenticated: false });
+        if (cancelled) return;
+        // Network failure — keep whatever's already on screen (cached
+        // or null). Don't flip to "unauthenticated" on a transient.
       });
     return () => {
       cancelled = true;
