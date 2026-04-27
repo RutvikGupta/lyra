@@ -101,18 +101,32 @@ export async function refreshAccessToken(
   if (res.status === 429) {
     return { kind: "transient" };
   }
-  // Other 4xx from the token endpoint means the refresh token itself is
-  // bad (invalid_grant, invalid_client). Tell the caller it's permanently
-  // dead so cookies / env vars can be cleared instead of retried.
+  // For other 4xx, only treat as truly invalid when Spotify explicitly
+  // says so via `error: invalid_grant | invalid_client | invalid_request`.
+  // Spotify's token endpoint occasionally returns generic 4xx under load
+  // for tokens that are still valid — clearing the cookie there logs the
+  // user out unnecessarily. Be conservative: if we can't parse the body
+  // or the error code isn't one of the fatal ones, treat as transient.
   if (res.status >= 400 && res.status < 500) {
-    let reason = "invalid_grant";
+    let reason: string | null = null;
     try {
       const body = (await res.json()) as { error?: string };
-      if (body?.error) reason = body.error;
+      if (typeof body?.error === "string") reason = body.error;
     } catch {
-      // ignore — keep default reason
+      // body wasn't JSON — treat as transient (don't nuke the cookie).
     }
-    return { kind: "invalid", reason };
+    const fatal =
+      reason === "invalid_grant" ||
+      reason === "invalid_client" ||
+      reason === "invalid_request";
+    if (fatal) {
+      console.warn(`[spotify] token refresh fatal: ${reason} (${res.status})`);
+      return { kind: "invalid", reason: reason! };
+    }
+    console.warn(
+      `[spotify] token refresh ${res.status} (error=${reason ?? "<no body>"}) — treating as transient`,
+    );
+    return { kind: "transient" };
   }
   return { kind: "transient" };
 }
@@ -149,6 +163,9 @@ export async function getAccessToken(): Promise<string | null> {
       // unauthorized, etc.). Drop the cookie so subsequent requests
       // behave as unauthenticated and fall back to showcase data instead
       // of looping on 503.
+      console.warn(
+        `[auth] clearing refresh cookie — Spotify rejected token (${result.reason})`,
+      );
       tokenCache.delete(refresh);
       try {
         store.delete(REFRESH_COOKIE);

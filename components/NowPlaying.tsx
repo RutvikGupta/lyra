@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 type NowPlayingState = {
   isPlaying?: boolean;
   progressMs?: number;
+  rateLimited?: boolean;
   track?: {
     name: string;
     uri: string;
@@ -59,7 +60,16 @@ export default function NowPlaying() {
         }
         const next: NowPlayingState = res.ok ? await res.json() : {};
         if (cancelled) return;
-        setSnap({ state: next, fetchedAt: Date.now() });
+        // If the server tells us it's rate-limited and there's no fresh
+        // track in the response, keep the previous snap so we don't blank
+        // out a currently-playing track over a transient throttle. The
+        // RateLimitChip already surfaces the throttling state to the user.
+        setSnap((prev) => {
+          if (next.rateLimited && !next.track && prev?.state.track) {
+            return prev;
+          }
+          return { state: next, fetchedAt: Date.now() };
+        });
       } catch {
         if (cancelled) return;
         setSnap({ state: {}, fetchedAt: Date.now() });
