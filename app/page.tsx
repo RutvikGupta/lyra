@@ -7,6 +7,12 @@ import ShowcaseConstellation from "@/components/ShowcaseConstellation";
 import TopArtists from "@/components/TopArtists";
 import { hasAuthSession } from "@/lib/spotify";
 
+// Belt-and-suspenders against Vercel CDN serving a cached pre-OAuth
+// render of the page. The await on hasAuthSession() should already
+// mark this dynamic, but force-dynamic guarantees no caching layer
+// can short-circuit the auth-conditional rendering.
+export const dynamic = "force-dynamic";
+
 export default async function Home({
   searchParams,
 }: {

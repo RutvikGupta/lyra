@@ -99,19 +99,21 @@ export async function GET(req: Request) {
     );
   }
 
-  // Set the cookie on the response object directly. In Next.js 16,
-  // mutating the cookies() store and then returning NextResponse.redirect
-  // doesn't reliably attach the Set-Cookie header to the redirect
-  // response — the documented pattern is to write through
-  // response.cookies on the redirect itself.
+  // Build the Set-Cookie header manually rather than going through
+  // cookies().set(...) or response.cookies.set(...). Both of those have
+  // proved unreliable on Next.js 16 redirect responses (the cookie
+  // sometimes doesn't make it onto the wire). Hand-formatting the header
+  // and appending it directly to response.headers always works.
+  const cookieParts = [
+    `${REFRESH_COOKIE}=${encodeURIComponent(tokens.refresh_token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${60 * 60 * 24 * 365}`,
+  ];
+  if (process.env.NODE_ENV === "production") cookieParts.push("Secure");
   const response = NextResponse.redirect(new URL("/", req.url));
-  response.cookies.set(REFRESH_COOKIE, tokens.refresh_token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 60 * 60 * 24 * 365,
-  });
+  response.headers.append("Set-Cookie", cookieParts.join("; "));
   return response;
 }
 
