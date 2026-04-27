@@ -116,18 +116,23 @@ export default async function Home({
         {!authed && (
           <div className="-mb-4 flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-[var(--muted)]">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
-            Cards below show kivtur00&apos;s live listening — Connect
-            Spotify above to see yours.
+            Cards below show kivtur00&apos;s top listens — Connect Spotify
+            above to see yours.
           </div>
         )}
 
-        {/* Now playing card */}
-        <section className="flex flex-col gap-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-[var(--muted)]">
-            Now playing
-          </h2>
-          <NowPlaying />
-        </section>
+        {/* Now playing — owner/visitor only when signed in. We don't
+            broadcast the owner's currently-playing track to anonymous
+            visitors anymore, so this section disappears entirely until
+            the visitor connects their own Spotify. */}
+        {authed && (
+          <section className="flex flex-col gap-3">
+            <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-[var(--muted)]">
+              Now playing
+            </h2>
+            <NowPlaying />
+          </section>
+        )}
 
         {/* Recently played */}
         <section className="flex flex-col gap-3">
