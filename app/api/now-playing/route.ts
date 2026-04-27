@@ -77,20 +77,37 @@ export async function GET() {
       const data = (await res.json()) as SpotifyCurrentlyPlaying;
       return Response.json(shape(data, "personal", true));
     }
-    // Authed but Spotify failed. Two cases:
-    //   (a) refresh token revoked → getAccessToken cleared the cookie →
-    //       hasAuthSession is now false. Fall through to showcase so the
-    //       visitor sees something instead of an empty card forever.
-    //   (b) genuine transient (post-OAuth lag, Spotify rate-limit on /me).
-    //       Return 200 with isPlaying:false — the client polls every ~2s
-    //       and gets fresh data on the next tick. Returning 503 on a
-    //       polled endpoint floods devtools without any UX upside; the
-    //       "no track playing" state is a natural empty render.
+    // Authed but Spotify failed. If the cookie was cleared, fall
+    // through to the unauthed showcase branch. Otherwise serve the
+    // showcase track with rateLimited:true — keeps the now-playing
+    // card alive during a throttle window instead of going blank,
+    // and the chip explains the source switch.
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
       const store = await cookies();
       const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
       const rateLimited = !!refresh && isRateLimitedFor(refresh);
+      if (showcaseConfigured()) {
+        try {
+          const payload = await withShowcaseCache(
+            "now-playing",
+            SHOWCASE_TTL,
+            async () => {
+              const r = await spotifyShowcaseFetch(
+                "/me/player/currently-playing",
+              );
+              if (!r || r.status === 204 || !r.ok) return null;
+              return (await r.json()) as SpotifyCurrentlyPlaying;
+            },
+          );
+          return Response.json({
+            ...shape(payload, "showcase", true),
+            rateLimited,
+          });
+        } catch {
+          // fall through
+        }
+      }
       return Response.json({
         authenticated: true,
         source: "personal",

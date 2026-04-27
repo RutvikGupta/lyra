@@ -63,18 +63,40 @@ export async function GET(req: Request) {
           items: shapeArtists(enriched),
         });
       }
-      // Authed but Spotify failed. Don't fall through to showcase here —
-      // that'd serve kivtur00's data to a logged-in non-owner, which is
-      // confusing. Instead return an empty personal response with
-      // rateLimited: true (when applicable) so the client can render the
-      // empty-graph state alongside the RateLimitChip explaining why.
-      // If the cookie was just cleared (invalid_grant), hasAuthSession
-      // is now false → fall through to the unauthed showcase branch.
+      // Authed but Spotify failed. If the cookie was just cleared
+      // (invalid_grant), fall through to the unauthed showcase branch.
+      // Otherwise the user is rate-limited or seeing a transient — fall
+      // through to the showcase branch below with `rateLimited: true`
+      // so the constellation/top-artists list stays populated. The
+      // RateLimitChip surfaces the throttle so the showcase data is
+      // explained rather than silently swapped in.
       const stillAuthed = await hasAuthSession();
       if (stillAuthed) {
         const store = await cookies();
         const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
         const rateLimited = !!refresh && isRateLimitedFor(refresh);
+        if (showcaseConfigured()) {
+          try {
+            const items = await withShowcaseCache(
+              `top-artists:${time_range}`,
+              SHOWCASE_TTL,
+              async () => {
+                const sd = await fetchShowcaseTopArtists(time_range, 50);
+                if (!sd) return [];
+                const enriched = await enrichArtists(sd.items);
+                return shapeArtists(enriched);
+              },
+            );
+            return Response.json({
+              authenticated: true,
+              source: "showcase",
+              items,
+              rateLimited,
+            });
+          } catch {
+            // fall through to empty-personal response below
+          }
+        }
         return Response.json({
           authenticated: true,
           source: "personal",

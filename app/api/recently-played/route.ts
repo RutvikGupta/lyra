@@ -58,14 +58,36 @@ export async function GET() {
     if (data) {
       return Response.json(shape(data as Raw, "personal", true));
     }
-    // See note in /api/now-playing for the two cases. Same handling:
-    // re-check auth → fall through to showcase if the cookie was just
-    // cleared; return 200 with an empty list if still authed (transient).
+    // Authed but Spotify failed. Mirror /api/top: fall through to
+    // showcase data when configured, with rateLimited:true so the
+    // RateLimitChip can explain. Cookie just cleared → unauthed
+    // showcase branch handles it.
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
       const store = await cookies();
       const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
       const rateLimited = !!refresh && isRateLimitedFor(refresh);
+      if (showcaseConfigured()) {
+        try {
+          const payload = await withShowcaseCache<Raw | null>(
+            "recently-played-raw",
+            SHOWCASE_TTL,
+            async () => {
+              const r = await spotifyShowcaseFetch(
+                "/me/player/recently-played?limit=20",
+              );
+              if (!r || !r.ok) return null;
+              return (await r.json()) as Raw;
+            },
+          );
+          return Response.json({
+            ...shape(payload, "showcase", true),
+            rateLimited,
+          });
+        } catch {
+          // fall through to empty-personal response below
+        }
+      }
       return Response.json({
         authenticated: true,
         source: "personal",
