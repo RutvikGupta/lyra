@@ -193,7 +193,17 @@ export async function getAccessToken(): Promise<string | null> {
 // silently swap them onto someone else's data).
 export async function hasAuthSession(): Promise<boolean> {
   const store = await cookies();
-  return !!store.get(REFRESH_COOKIE)?.value;
+  const value = store.get(REFRESH_COOKIE)?.value;
+  // Diagnostic: surface whether the cookie is actually visible to
+  // server-side reads. Combined with the [auth] callback success log,
+  // this lets us tell from Vercel logs whether (a) the cookie was set
+  // but the browser's not sending it, (b) it's being sent but cookies()
+  // isn't returning it, or (c) the home page render is happening before
+  // the cookie was set.
+  console.log(
+    `[auth] hasAuthSession check — cookie ${value ? `present (len=${value.length})` : "MISSING"}`,
+  );
+  return !!value;
 }
 
 // Cooldown map keyed by refresh token. When Spotify returns 429 with a
