@@ -44,6 +44,7 @@ import {
 import { loadHistory } from "@/lib/storage";
 import type { Play } from "@/lib/types";
 import type { Criteria, LibraryCriteria } from "./CriteriaBar";
+import ArtistTagsPanel from "./ArtistTagsPanel";
 import NodeList from "./NodeList";
 import TagsPanel from "./TagsPanel";
 
@@ -449,7 +450,10 @@ export default function Starfield({
   const { graph, clusterOverride, clusterInfo } = useMemo(() => {
     if (!rawGraph)
       return { graph: null, clusterOverride: null, clusterInfo: null };
-    const tags = libCriteria?.tags ?? [];
+    // Tags can come from either kind: library criteria has its own tag
+    // array, api criteria has an optional one (genre filter only).
+    const apiTags = criteria.kind === "api" ? (criteria.tags ?? []) : [];
+    const tags = libCriteria?.tags ?? apiTags;
     const colorMode = libCriteria?.colorMode ?? "genre";
 
     let nodes = rawGraph.nodes;
@@ -533,7 +537,9 @@ export default function Starfield({
     }
 
     return { graph: { nodes, links }, clusterOverride, clusterInfo };
-  }, [rawGraph, libCriteria]);
+    // criteria included so api-mode tag filter changes re-derive the
+    // displayed graph without a network refetch.
+  }, [rawGraph, libCriteria, criteria]);
 
   // Lazy co-play matrix — built once when the user first opens the overlay,
   // then cached for the lifetime of this Starfield mount. ~150ms for 50k
@@ -1070,6 +1076,14 @@ export default function Starfield({
           onChange={(next) => onCriteriaChange(next)}
           showCoPlay={showCoPlay}
           onShowCoPlayChange={setShowCoPlay}
+        />
+      )}
+
+      {rawGraph && criteria.kind === "api" && onCriteriaChange && (
+        <ArtistTagsPanel
+          rawNodes={rawGraph.nodes}
+          criteria={criteria}
+          onChange={(next) => onCriteriaChange(next)}
         />
       )}
 

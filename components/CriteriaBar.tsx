@@ -36,6 +36,11 @@ export type Criteria =
   | {
       kind: "api";
       timeRange: "short_term" | "medium_term" | "long_term";
+      // Optional Last.fm/Spotify-genre filter for the api-mode
+      // constellation. Empty / undefined = no filter. Mood filtering
+      // and color-cluster overlays remain library-mode-only — those
+      // need raw plays to be meaningful.
+      tags?: string[];
     }
   | LibraryCriteria;
 
