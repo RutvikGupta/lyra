@@ -26,6 +26,7 @@ import {
   readStaleCache,
   writeCache,
 } from "@/lib/client-cache";
+import { fetchLibraryArtistsCached } from "@/lib/library-artists-cache";
 import { clusterColor, detectClusters } from "@/lib/cluster";
 import { nodeMatchesMoodFilter } from "@/lib/moods";
 import { computeCoplayMatrix, topCoplayed, type CoplayMatrix } from "@/lib/coplay";
@@ -394,19 +395,18 @@ export default function Starfield({
               );
               return;
             }
-            const r = await fetch("/api/library-artists", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ artists: top }),
-              cache: "no-store",
-            });
-            if (!r.ok) {
-              if (!cancelled) setError(`Library enrichment failed (${r.status})`);
+            try {
+              items = await fetchLibraryArtistsCached(top);
+            } catch (err) {
+              if (!cancelled)
+                setError(
+                  err instanceof Error
+                    ? err.message
+                    : `Library enrichment failed`,
+                );
               return;
             }
-            const data = await r.json();
             if (cancelled) return;
-            items = data.items ?? [];
             const g = buildArtistGraph(
               items as Parameters<typeof buildArtistGraph>[0],
               criteria.sortBy,
@@ -442,22 +442,19 @@ export default function Starfield({
             msPlayed: 0,
             trackCount: 0,
           }));
-          const r = await fetch("/api/library-artists", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ artists: uniqueArtists }),
-            cache: "no-store",
-          });
-          if (!r.ok) {
-            if (!cancelled) setError(`Library enrichment failed (${r.status})`);
+          let enriched: { name: string; genres: string[] }[] = [];
+          try {
+            enriched = await fetchLibraryArtistsCached(uniqueArtists);
+          } catch (err) {
+            if (!cancelled)
+              setError(
+                err instanceof Error ? err.message : `Library enrichment failed`,
+              );
             return;
           }
-          const data = (await r.json()) as {
-            items: { name: string; genres: string[] }[];
-          };
           if (cancelled) return;
           const artistGenres = new Map<string, string[]>();
-          for (const a of data.items ?? []) {
+          for (const a of enriched) {
             artistGenres.set(a.name.toLowerCase(), a.genres ?? []);
           }
           const trackInputs = topTracks.map((t, i) => ({

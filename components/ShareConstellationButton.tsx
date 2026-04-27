@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { fetchLibraryArtistsCached } from "@/lib/library-artists-cache";
 import { bakeSnapshot } from "@/lib/showcase-library-bake";
 import { SNAPSHOT_VERSION, type ArtistsSnapshot, type Snapshot } from "@/lib/showcase-library";
 import { loadHistory } from "@/lib/storage";
@@ -109,26 +110,22 @@ export default function ShareConstellationButton({
       const topArtistNames = Array.from(
         new Set(history.plays.map((p) => p.artistName)),
       ).slice(0, 250);
-      const enrichRes = await fetch("/api/library-artists", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          artists: topArtistNames.map((name) => ({
+      let enrichedItems: { name: string; genres: string[] }[] = [];
+      try {
+        enrichedItems = await fetchLibraryArtistsCached(
+          topArtistNames.map((name) => ({
             name,
             playCount: 1,
             msPlayed: 0,
             trackCount: 0,
           })),
-        }),
-        cache: "no-store",
-      });
-      if (!enrichRes.ok) {
-        return { error: `Enrichment failed (${enrichRes.status})` };
+        );
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : "Enrichment failed",
+        };
       }
-      const enrichJson = (await enrichRes.json()) as {
-        items: { name: string; genres: string[] }[];
-      };
-      return bakeSnapshot(history, displayName, enrichJson.items);
+      return bakeSnapshot(history, displayName, enrichedItems);
     }
 
     // No local history — re-share the published showcase snapshot.

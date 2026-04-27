@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fetchLibraryArtistsCached } from "@/lib/library-artists-cache";
 import { bakeSnapshot } from "@/lib/showcase-library-bake";
 import { loadHistory } from "@/lib/storage";
 
@@ -58,29 +59,24 @@ export default function PublishShowcaseButton() {
       const topArtistNames = Array.from(
         new Set(history.plays.map((p) => p.artistName)),
       ).slice(0, 250);
-      const enrichRes = await fetch("/api/library-artists", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          artists: topArtistNames.map((name) => ({
+      let enrichedItems: { name: string; genres: string[] }[] = [];
+      try {
+        enrichedItems = await fetchLibraryArtistsCached(
+          topArtistNames.map((name) => ({
             name,
             playCount: 1,
             msPlayed: 0,
             trackCount: 0,
           })),
-        }),
-        cache: "no-store",
-      });
-      if (!enrichRes.ok) {
+        );
+      } catch (err) {
         setState({
           kind: "error",
-          message: `Enrichment failed (${enrichRes.status})`,
+          message: err instanceof Error ? err.message : "Enrichment failed",
         });
         return;
       }
-      const enrichJson = (await enrichRes.json()) as {
-        items: { name: string; genres: string[] }[];
-      };
+      const enrichJson = { items: enrichedItems };
 
       const snapshot = bakeSnapshot(history, ownerName, enrichJson.items);
 
