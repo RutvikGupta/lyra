@@ -83,14 +83,14 @@ export async function GET(req: Request) {
 
 const RANGES: TimeRange[] = ["short_term", "medium_term", "long_term"];
 
-async function maybeRefreshOwnerTop(): Promise<{
+export async function maybeRefreshOwnerTop(force = false): Promise<{
   status: "skipped" | "refreshed" | "failed";
   refreshedAt?: number;
   reason?: string;
 }> {
   const existing = await readOwnerTop();
   const now = Date.now();
-  if (existing && now - existing.refreshedAt < REFRESH_AFTER_MS) {
+  if (!force && existing && now - existing.refreshedAt < REFRESH_AFTER_MS) {
     return { status: "skipped", refreshedAt: existing.refreshedAt };
   }
   try {
@@ -154,14 +154,18 @@ type SpotifyRecentlyResponse = {
   }[];
 };
 
-async function maybeRefreshOwnerRecently(): Promise<{
+export async function maybeRefreshOwnerRecently(force = false): Promise<{
   status: "skipped" | "refreshed" | "failed";
   refreshedAt?: number;
   reason?: string;
 }> {
   const existing = await readOwnerRecently();
   const now = Date.now();
-  if (existing && now - existing.refreshedAt < RECENTLY_REFRESH_AFTER_MS) {
+  if (
+    !force &&
+    existing &&
+    now - existing.refreshedAt < RECENTLY_REFRESH_AFTER_MS
+  ) {
     return { status: "skipped", refreshedAt: existing.refreshedAt };
   }
   try {

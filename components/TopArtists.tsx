@@ -17,10 +17,10 @@ type Item = {
   uri?: string;
 };
 
-// Top artists barely move day-to-day. Cache aggressively so the second-
-// and-later page loads render instantly without an API call, and so a
-// rate-limited /api/top response doesn't blank the section.
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+// Top artists barely move day-to-day. 1h TTL gives a sub-2h session
+// zero /api/top calls (after the first), but a return visit later in
+// the day still sees a refreshed list.
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 const RANGE_LABEL = {
   short_term: "4 weeks",

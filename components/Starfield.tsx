@@ -152,7 +152,10 @@ export default function Starfield({
             items = sharedArtists.items;
           } else {
             const cacheKey = `lyra:starfield-top:${criteria.timeRange}`;
-            const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+            // 1h TTL: short enough that a user who comes back same-day
+            // sees a refreshed graph; long enough to make a typical
+            // sub-2h browsing session free of any /api/top calls.
+            const CACHE_TTL = 60 * 60 * 1000;
             const fresh = readFreshCache<unknown[]>(cacheKey, CACHE_TTL);
             if (fresh) {
               // Fresh cache — render the constellation without touching
