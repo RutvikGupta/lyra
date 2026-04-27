@@ -96,12 +96,20 @@ export default async function Home({
               Spotify connect failed
             </div>
             <div className="mt-1 text-red-200/80">{errMsg}</div>
-            <a
-              href="/api/auth/login"
-              className="mt-2 inline-block text-xs font-medium text-[var(--brand)] underline hover:no-underline"
-            >
-              Try again
-            </a>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              <a
+                href="/api/auth/login"
+                className="text-xs font-medium text-[var(--brand)] underline hover:no-underline"
+              >
+                Try again
+              </a>
+              <a
+                href="/"
+                className="text-xs font-medium text-white/70 underline hover:no-underline"
+              >
+                Browse without signing in
+              </a>
+            </div>
           </div>
         )}
 
@@ -283,7 +291,7 @@ function decodeErrorMessage(raw: string): string {
     return "You declined the Spotify permissions request.";
   }
   if (raw === "not_on_allowlist") {
-    return "Spotify accepted the login, but your account isn't on the dev app's allowlist — every API call returns 403. Add your Spotify email under your developer dashboard → app → User Management, then try again.";
+    return "Lyra is in Spotify's dev mode, which limits sign-ins to accounts the owner has explicitly added. Your account isn't on the list yet. You can still browse kivtur00's showcase below without signing in — or ask them to add your Spotify email so you can connect your own data.";
   }
   if (raw === "token_invalid") {
     return "Spotify returned a token that doesn't authenticate. Try again — if it persists, the dev app may need to be re-created.";
