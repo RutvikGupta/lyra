@@ -22,6 +22,9 @@ export default function RateLimitChip() {
     async function tick() {
       if (typeof document !== "undefined" && document.hidden) {
         // Don't burn requests on hidden tabs; resume on visibilitychange.
+        // Important: still reschedule, otherwise the loop dies the moment
+        // the tab is hidden once.
+        if (!cancelled) timer = setTimeout(tick, 30_000);
         return;
       }
       try {
@@ -30,9 +33,17 @@ export default function RateLimitChip() {
         if (r.ok) {
           const data = (await r.json()) as { rateLimited?: boolean };
           setThrottled(!!data.rateLimited);
+        } else {
+          // Non-OK (401 = cookie cleared, 5xx = backend issue) — these
+          // aren't rate-limit conditions, so clear the chip rather than
+          // leaving it stuck on a stale `true`.
+          setThrottled(false);
         }
       } catch {
-        // Swallow — next tick retries.
+        // Network failure — assume the chip's prior state is no longer
+        // reliable; clear it. The next successful poll will set it again
+        // if we're really still rate-limited.
+        if (!cancelled) setThrottled(false);
       }
       if (!cancelled) timer = setTimeout(tick, 30_000);
     }
