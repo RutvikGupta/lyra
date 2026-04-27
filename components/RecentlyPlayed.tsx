@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  readFreshCache,
+  readStaleCache,
+  writeCache,
+} from "@/lib/client-cache";
 
 type Item = {
   playedAt: string;
@@ -12,6 +17,13 @@ type Item = {
   };
 };
 
+// Recently-played updates whenever the user finishes a track, but
+// hammering the API every 5 minutes was burning rate-limit headroom
+// for marginal freshness. Cache for 30 min — fresh on subsequent loads,
+// stale-readable during a throttle.
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const CACHE_KEY = "lyra:recently-played";
+
 export default function RecentlyPlayed() {
   const [items, setItems] = useState<Item[] | null>(null);
   const [authed, setAuthed] = useState(true);
@@ -19,6 +31,15 @@ export default function RecentlyPlayed() {
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const fresh = readFreshCache<Item[]>(CACHE_KEY, CACHE_TTL);
+    if (fresh) {
+      setItems(fresh);
+      return;
+    }
+    const stale = readStaleCache<Item[]>(CACHE_KEY);
+    if (stale) setItems(stale);
+
     // Right after OAuth, Spotify's access-token issuance can lag a few
     // seconds — the API returns 503 with `retrying:true` in that window.
     // Retry on a short backoff (1s, 2s, 4s) so the section populates
@@ -30,39 +51,35 @@ export default function RecentlyPlayed() {
       try {
         const r = await fetch("/api/recently-played", { cache: "no-store" });
         if (r.status === 503) {
-          // Schedule a retry; don't clear existing items.
           if (!cancelled && retryIdx < RETRY_DELAYS.length) {
             retryTimer = setTimeout(load, RETRY_DELAYS[retryIdx++]);
-          } else if (!cancelled && items === null) {
+          } else if (!cancelled && !stale) {
             setItems([]);
           }
           return;
         }
         if (!r.ok) {
-          if (!cancelled) setItems([]);
+          if (!cancelled && !stale) setItems([]);
           return;
         }
         const data = await r.json();
-        if (!cancelled) {
-          setItems(data.items ?? []);
-          retryIdx = 0; // reset for the next poll cycle
+        if (cancelled) return;
+        const next = (data.items as Item[]) ?? [];
+        if (data.rateLimited && next.length === 0) {
+          if (!stale) setItems([]);
+          return;
         }
+        setItems(next);
+        if (next.length > 0) writeCache(CACHE_KEY, next);
       } catch {
-        if (!cancelled) setItems((prev) => prev ?? []);
+        if (!cancelled && !stale) setItems([]);
       }
     }
     load();
-    // 5-min poll matches the showcase route's TTL — no point hammering.
-    const id = setInterval(load, 5 * 60_000);
     return () => {
       cancelled = true;
-      clearInterval(id);
       if (retryTimer) clearTimeout(retryTimer);
     };
-    // items intentionally omitted — we only read it inside `load`, which
-    // gets the latest value on every invocation. Including it would tear
-    // down + recreate the interval on every state change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!authed) return null;

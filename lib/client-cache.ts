@@ -1,0 +1,61 @@
+// localStorage-backed cache with TTL. Used by client components that
+// fetch user-specific data which doesn't change minute-to-minute (top
+// artists, top tracks, recently-played). Goals:
+//
+//   - Instant render on subsequent page loads (no waiting on /api/*).
+//   - Skip the network entirely while the cached entry is still fresh,
+//     reducing pressure on Spotify's per-token rate limit.
+//   - On a rate-limited response, the caller can fall back to the
+//     last-known-good data instead of switching to someone else's data
+//     or showing a blank state.
+//
+// The cache lives per-browser. Server is the source of truth — we never
+// merge cached data into a fresh response, only swap one for the other.
+
+type CacheEntry<T> = { data: T; storedAt: number };
+
+export function readFreshCache<T>(key: string, maxAgeMs: number): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as CacheEntry<T>;
+    if (Date.now() - entry.storedAt > maxAgeMs) return null;
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+// Read the cached value regardless of age. Used to prefer stale data
+// over an empty render when the API is currently rate-limited.
+export function readStaleCache<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as CacheEntry<T>;
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+export function writeCache<T>(key: string, data: T) {
+  if (typeof window === "undefined") return;
+  try {
+    const entry: CacheEntry<T> = { data, storedAt: Date.now() };
+    window.localStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // quota / private mode — non-fatal, just skip the write.
+  }
+}
+
+export function clearCache(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}

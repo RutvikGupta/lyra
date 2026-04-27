@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  readFreshCache,
+  readStaleCache,
+  writeCache,
+} from "@/lib/client-cache";
 
 type Item = {
   id: string;
@@ -11,6 +16,11 @@ type Item = {
   listeners?: number;
   uri?: string;
 };
+
+// Top artists barely move day-to-day. Cache aggressively so the second-
+// and-later page loads render instantly without an API call, and so a
+// rate-limited /api/top response doesn't blank the section.
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
 const RANGE_LABEL = {
   short_term: "4 weeks",
@@ -28,13 +38,25 @@ export default function TopArtists() {
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const cacheKey = `lyra:top-artists:${range}`;
+
+    // Fresh cache → render and skip the network entirely.
+    const fresh = readFreshCache<Item[]>(cacheKey, CACHE_TTL);
+    if (fresh) {
+      setItems(fresh);
+      return;
+    }
+    // Stale (or no) cache. Show stale immediately so the UI never goes
+    // blank; fetch in the background to refresh.
+    const stale = readStaleCache<Item[]>(cacheKey);
+    setItems(stale ?? null);
+
     // Post-OAuth, Spotify's access token can take a few seconds to be
     // accepted by /me/top/artists. The API returns 503 in that window so
     // we don't accidentally serve showcase data to a freshly signed-in
     // user. Retry on a short backoff to populate without manual refresh.
     const RETRY_DELAYS = [1000, 2000, 4000];
     let retryIdx = 0;
-    setItems(null);
 
     async function load() {
       try {
@@ -45,19 +67,29 @@ export default function TopArtists() {
         if (r.status === 503) {
           if (!cancelled && retryIdx < RETRY_DELAYS.length) {
             retryTimer = setTimeout(load, RETRY_DELAYS[retryIdx++]);
-          } else if (!cancelled) {
+          } else if (!cancelled && !stale) {
             setItems([]);
           }
           return;
         }
         if (!r.ok) {
-          if (!cancelled) setItems([]);
+          if (!cancelled && !stale) setItems([]);
           return;
         }
         const data = await r.json();
-        if (!cancelled) setItems((data.items as Item[]) ?? []);
+        if (cancelled) return;
+        const next = (data.items as Item[]) ?? [];
+        // Rate-limited response with no fresh items — keep the stale
+        // cached list rather than blanking. The RateLimitChip explains
+        // why the data isn't refreshing.
+        if (data.rateLimited && next.length === 0) {
+          if (!stale) setItems([]);
+          return;
+        }
+        setItems(next);
+        if (next.length > 0) writeCache(cacheKey, next);
       } catch {
-        if (!cancelled) setItems([]);
+        if (!cancelled && !stale) setItems([]);
       }
     }
     load();

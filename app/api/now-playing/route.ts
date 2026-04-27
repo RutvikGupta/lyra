@@ -5,11 +5,6 @@ import {
   REFRESH_COOKIE,
   spotifyFetch,
 } from "@/lib/spotify";
-import {
-  showcaseConfigured,
-  spotifyShowcaseFetch,
-  withShowcaseCache,
-} from "@/lib/spotify-showcase";
 
 type SpotifyArtist = { name: string; uri: string };
 type SpotifyImage = { url: string; width: number; height: number };
@@ -25,11 +20,6 @@ type SpotifyCurrentlyPlaying = {
     artists: SpotifyArtist[];
   } | null;
 };
-
-// Tiny TTL — just enough to dedupe concurrent visitor polls within the
-// same second. Anything longer and song changes feel laggy. ~1 Spotify
-// call/sec when watched, well under their unauthed rate limit.
-const SHOWCASE_TTL = 1_000;
 
 function shape(
   data: SpotifyCurrentlyPlaying | null,
@@ -77,37 +67,15 @@ export async function GET() {
       const data = (await res.json()) as SpotifyCurrentlyPlaying;
       return Response.json(shape(data, "personal", true));
     }
-    // Authed but Spotify failed. If the cookie was cleared, fall
-    // through to the unauthed showcase branch. Otherwise serve the
-    // showcase track with rateLimited:true — keeps the now-playing
-    // card alive during a throttle window instead of going blank,
-    // and the chip explains the source switch.
+    // Authed but Spotify failed. Return empty + rateLimited:true.
+    // The client preserves the previous in-memory track during the
+    // throttle window (NowPlaying.tsx + Starfield's halo). Cookie
+    // cleared → fall through to unauthed showcase branch.
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
       const store = await cookies();
       const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
       const rateLimited = !!refresh && isRateLimitedFor(refresh);
-      if (showcaseConfigured()) {
-        try {
-          const payload = await withShowcaseCache(
-            "now-playing",
-            SHOWCASE_TTL,
-            async () => {
-              const r = await spotifyShowcaseFetch(
-                "/me/player/currently-playing",
-              );
-              if (!r || r.status === 204 || !r.ok) return null;
-              return (await r.json()) as SpotifyCurrentlyPlaying;
-            },
-          );
-          return Response.json({
-            ...shape(payload, "showcase", true),
-            rateLimited,
-          });
-        } catch {
-          // fall through
-        }
-      }
       return Response.json({
         authenticated: true,
         source: "personal",
@@ -118,32 +86,14 @@ export async function GET() {
     // Cookie was cleared → flow into the showcase branch below.
   }
 
-  // No session. Serve the owner's showcase track so visitors see something
-  // instead of an empty card.
-  if (!showcaseConfigured()) {
-    return Response.json({
-      authenticated: false,
-      source: "personal",
-      isPlaying: false,
-    });
-  }
-
-  try {
-    const payload = await withShowcaseCache(
-      "now-playing",
-      SHOWCASE_TTL,
-      async () => {
-        const r = await spotifyShowcaseFetch("/me/player/currently-playing");
-        if (!r || r.status === 204 || !r.ok) return null;
-        return (await r.json()) as SpotifyCurrentlyPlaying;
-      },
-    );
-    return Response.json(shape(payload, "showcase", false));
-  } catch {
-    return Response.json({
-      authenticated: false,
-      source: "showcase",
-      isPlaying: false,
-    });
-  }
+  // Unauthenticated visitors used to see the owner's currently-playing
+  // track ("showcase now-playing"). That was removed: it surfaced the
+  // owner's listening to anyone who landed on the page (privacy), and
+  // it burned the showcase token's rate-limit budget on something
+  // visitors didn't ask for. Now-playing is owner-only.
+  return Response.json({
+    authenticated: false,
+    source: "personal",
+    isPlaying: false,
+  });
 }

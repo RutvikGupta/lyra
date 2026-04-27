@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 
 // Visible-but-non-spammy notice that the current user's Spotify calls
-// are being throttled (HTTP 429) and the app has temporarily fallen
-// back to showcase data. Polls /api/profile every 30s and shows a chip
-// when the response carries `rateLimited: true`. Auto-dismisses when
-// calls resume.
+// are being throttled (HTTP 429). Polls /api/profile every 30s and shows
+// a chip when the response carries `rateLimited: true`. Auto-dismisses
+// when calls resume. The displayed data is the cached personal data
+// (top artists / recently-played from localStorage) — we don't fall
+// through to anyone else's data while a user is signed in.
 //
 // Rendered on /library and /explore. Top-center area is busy, so we
 // anchor bottom-center where it can't fight the source toggle / Tags
@@ -91,7 +92,7 @@ export default function RateLimitChip() {
       className="overlay-tab pointer-events-auto fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/[0.08] px-3.5 py-1.5 text-[11px] font-semibold text-amber-200 backdrop-blur-md"
     >
       <span aria-hidden className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-300" />
-      <span>Spotify is throttling your account — showing showcase data</span>
+      <span>Spotify is throttling your account — showing cached data</span>
     </div>
   );
 }

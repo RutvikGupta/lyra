@@ -21,6 +21,11 @@ import {
   aggregateTopArtistsFromPlays,
   aggregateTopTracksFromPlays,
 } from "@/lib/aggregate";
+import {
+  readFreshCache,
+  readStaleCache,
+  writeCache,
+} from "@/lib/client-cache";
 import { clusterColor, detectClusters } from "@/lib/cluster";
 import { nodeMatchesMoodFilter } from "@/lib/moods";
 import { computeCoplayMatrix, topCoplayed, type CoplayMatrix } from "@/lib/coplay";
@@ -145,37 +150,71 @@ export default function Starfield({
           if (sharedArtists) {
             items = sharedArtists.items;
           } else {
-            // Retry on 503 — the route returns that during the post-OAuth
-            // token-propagation window so we don't silently serve showcase
-            // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
-            const RETRY_DELAYS = [1000, 2000, 4000];
-            let attempt = 0;
-            let r: Response;
-            while (true) {
-              r = await fetch(
-                `/api/top?type=artists&time_range=${criteria.timeRange}`,
-                { cache: "no-store" },
-              );
-              if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
-              await new Promise((resolve) =>
-                setTimeout(resolve, RETRY_DELAYS[attempt++]),
-              );
-              if (cancelled) return;
-            }
-            if (r.status === 401) {
-              if (!cancelled)
-                setError(
-                  "Connect Spotify on the home page to load your top artists.",
+            const cacheKey = `lyra:starfield-top:${criteria.timeRange}`;
+            const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+            const fresh = readFreshCache<unknown[]>(cacheKey, CACHE_TTL);
+            if (fresh) {
+              // Fresh cache — render the constellation without touching
+              // the API at all. Top artists barely move day-to-day, so
+              // skipping the network here is a big rate-limit win.
+              items = fresh;
+            } else {
+              const stale = readStaleCache<unknown[]>(cacheKey);
+              // Retry on 503 — the route returns that during the post-OAuth
+              // token-propagation window so we don't silently serve showcase
+              // data to a freshly signed-in user. Backoff: 1s, 2s, 4s.
+              const RETRY_DELAYS = [1000, 2000, 4000];
+              let attempt = 0;
+              let r: Response;
+              while (true) {
+                r = await fetch(
+                  `/api/top?type=artists&time_range=${criteria.timeRange}`,
+                  { cache: "no-store" },
                 );
-              return;
+                if (r.status !== 503 || attempt >= RETRY_DELAYS.length) break;
+                await new Promise((resolve) =>
+                  setTimeout(resolve, RETRY_DELAYS[attempt++]),
+                );
+                if (cancelled) return;
+              }
+              if (r.status === 401) {
+                if (!cancelled)
+                  setError(
+                    "Connect Spotify on the home page to load your top artists.",
+                  );
+                return;
+              }
+              if (!r.ok) {
+                if (stale) {
+                  items = stale;
+                } else {
+                  if (!cancelled) setError(`Failed (${r.status})`);
+                  return;
+                }
+              } else {
+                const data = await r.json();
+                if (cancelled) return;
+                const next = (data.items as unknown[]) ?? [];
+                // Rate-limited with no fresh data — fall back to the
+                // stale cache so the constellation stays populated. If
+                // there's no cache (first-ever visit while throttled),
+                // surface a clear error rather than a blank graph.
+                if (data.rateLimited && next.length === 0) {
+                  if (stale) {
+                    items = stale;
+                  } else {
+                    if (!cancelled)
+                      setError(
+                        "Spotify is rate-limiting your account — try again shortly.",
+                      );
+                    return;
+                  }
+                } else {
+                  items = next;
+                  if (next.length > 0) writeCache(cacheKey, next);
+                }
+              }
             }
-            if (!r.ok) {
-              if (!cancelled) setError(`Failed (${r.status})`);
-              return;
-            }
-            const data = await r.json();
-            if (cancelled) return;
-            items = data.items ?? [];
           }
         } else {
           const history = sharedLibrary ? null : await loadHistory();

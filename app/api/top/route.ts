@@ -63,40 +63,16 @@ export async function GET(req: Request) {
           items: shapeArtists(enriched),
         });
       }
-      // Authed but Spotify failed. If the cookie was just cleared
-      // (invalid_grant), fall through to the unauthed showcase branch.
-      // Otherwise the user is rate-limited or seeing a transient — fall
-      // through to the showcase branch below with `rateLimited: true`
-      // so the constellation/top-artists list stays populated. The
-      // RateLimitChip surfaces the throttle so the showcase data is
-      // explained rather than silently swapped in.
+      // Authed but Spotify failed. Return an empty personal response
+      // with rateLimited:true. The client caches the user's last-good
+      // data in localStorage and renders that during the throttle
+      // window, so we never serve someone else's data to a logged-in
+      // user. Cookie just cleared → fall through to unauthed branch.
       const stillAuthed = await hasAuthSession();
       if (stillAuthed) {
         const store = await cookies();
         const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
         const rateLimited = !!refresh && isRateLimitedFor(refresh);
-        if (showcaseConfigured()) {
-          try {
-            const items = await withShowcaseCache(
-              `top-artists:${time_range}`,
-              SHOWCASE_TTL,
-              async () => {
-                const sd = await fetchShowcaseTopArtists(time_range, 50);
-                if (!sd) return [];
-                const enriched = await enrichArtists(sd.items);
-                return shapeArtists(enriched);
-              },
-            );
-            return Response.json({
-              authenticated: true,
-              source: "showcase",
-              items,
-              rateLimited,
-            });
-          } catch {
-            // fall through to empty-personal response below
-          }
-        }
         return Response.json({
           authenticated: true,
           source: "personal",
