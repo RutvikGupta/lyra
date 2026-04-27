@@ -104,14 +104,23 @@ export async function GET(req: Request) {
   // proved unreliable on Next.js 16 redirect responses (the cookie
   // sometimes doesn't make it onto the wire). Hand-formatting the header
   // and appending it directly to response.headers always works.
+  //
+  // Critically: do NOT URL-encode the value. Next.js's cookies().get()
+  // returns the cookie value verbatim (no decode), so encoding on set
+  // means the server reads the encoded form and refresh-token requests
+  // to Spotify fail with invalid_grant. Spotify refresh tokens use a
+  // URL-safe charset (alphanum + - _) so no escaping is needed anyway.
   const cookieParts = [
-    `${REFRESH_COOKIE}=${encodeURIComponent(tokens.refresh_token)}`,
+    `${REFRESH_COOKIE}=${tokens.refresh_token}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${60 * 60 * 24 * 365}`,
   ];
   if (process.env.NODE_ENV === "production") cookieParts.push("Secure");
+  console.log(
+    `[auth] callback success — setting refresh cookie (token length=${tokens.refresh_token.length})`,
+  );
   const response = NextResponse.redirect(new URL("/", req.url));
   response.headers.append("Set-Cookie", cookieParts.join("; "));
   return response;
