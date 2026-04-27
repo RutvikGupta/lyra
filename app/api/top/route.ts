@@ -8,6 +8,7 @@ import {
   type SpotifyArtist,
   type TimeRange,
 } from "@/lib/spotify-api";
+import { readOwnerTop } from "@/lib/owner-top-store";
 import {
   showcaseConfigured,
   withShowcaseCache,
@@ -80,6 +81,17 @@ export async function GET(req: Request) {
           rateLimited,
         });
       }
+    }
+
+    // Prefer the weekly-baked Blob snapshot — visitor traffic never
+    // hits Spotify when this is populated. See lib/owner-top-store.ts.
+    const baked = await readOwnerTop();
+    if (baked && baked.artists[time_range]?.length) {
+      return Response.json({
+        authenticated: false,
+        source: "showcase",
+        items: baked.artists[time_range],
+      });
     }
 
     if (!showcaseConfigured()) {

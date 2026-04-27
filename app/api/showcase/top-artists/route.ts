@@ -1,3 +1,4 @@
+import { readOwnerTop } from "@/lib/owner-top-store";
 import {
   enrichArtists,
   fetchShowcaseTopArtists,
@@ -6,7 +7,8 @@ import {
 import { withShowcaseCache } from "@/lib/spotify-showcase";
 
 const VALID_RANGES: TimeRange[] = ["short_term", "medium_term", "long_term"];
-const TTL_MS = 60 * 60_000; // 1 hour — top artists barely move on this scale
+const TTL_MS = 60 * 60_000; // fallback live-fetch cache (cron handles the
+// happy path with a weekly Blob refresh)
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -15,6 +17,18 @@ export async function GET(req: Request) {
     VALID_RANGES.includes(rangeParam as TimeRange) ? rangeParam : "long_term"
   ) as TimeRange;
 
+  // Happy path: the cron has baked a weekly snapshot to Blob storage.
+  // Visitors read from there and never hit Spotify directly, which is
+  // critical for keeping the showcase token under its rate limit when
+  // unauthed traffic spikes.
+  const baked = await readOwnerTop();
+  if (baked && baked.artists[time_range]?.length) {
+    return Response.json({ items: baked.artists[time_range] });
+  }
+
+  // Cron hasn't run yet (cold start, fresh deploy) or Blob is empty —
+  // fall back to a live fetch with the original 1h in-memory cache so
+  // the page still works.
   try {
     const items = await withShowcaseCache(
       `top-artists:${time_range}`,
