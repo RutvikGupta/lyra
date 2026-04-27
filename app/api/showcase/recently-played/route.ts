@@ -1,4 +1,4 @@
-import { readOwnerRecently } from "@/lib/owner-recently-store";
+import { readOwnerRecentlyFresh } from "@/lib/owner-recently-store";
 import {
   spotifyShowcaseFetch,
   withShowcaseCache,
@@ -44,9 +44,10 @@ async function load(): Promise<{ items: Item[] }> {
 }
 
 export async function GET() {
-  // Happy path: the cron has baked the daily snapshot to Blob storage,
-  // so visitor traffic doesn't hit Spotify at all.
-  const baked = await readOwnerRecently();
+  // SWR read: returns the Blob immediately if fresh (<5 min old);
+  // otherwise refreshes from Spotify (with inflight dedup) before
+  // returning. The cron still guarantees daily freshness as a floor.
+  const baked = await readOwnerRecentlyFresh();
   if (baked && baked.items.length > 0) {
     return Response.json({ items: baked.items });
   }

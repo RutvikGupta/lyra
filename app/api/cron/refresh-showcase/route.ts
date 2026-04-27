@@ -1,9 +1,7 @@
 import {
-  OWNER_RECENTLY_VERSION,
   readOwnerRecently,
   REFRESH_AFTER_MS as RECENTLY_REFRESH_AFTER_MS,
-  writeOwnerRecently,
-  type OwnerRecentlyItem,
+  refreshOwnerRecentlyFromSpotify,
 } from "@/lib/owner-recently-store";
 import {
   OWNER_TOP_VERSION,
@@ -21,7 +19,6 @@ import {
 import {
   invalidateShowcaseCache,
   resetShowcaseLatch,
-  spotifyShowcaseFetch,
 } from "@/lib/spotify-showcase";
 
 // Vercel cron entry point. Vercel injects an `Authorization: Bearer <CRON_SECRET>`
@@ -179,18 +176,6 @@ export async function maybeRefreshOwnerTop(force = false): Promise<{
   }
 }
 
-type SpotifyRecentlyResponse = {
-  items?: {
-    played_at: string;
-    track: {
-      name: string;
-      uri: string;
-      artists?: { name: string }[];
-      album?: { images?: { url: string }[] };
-    };
-  }[];
-};
-
 export async function maybeRefreshOwnerRecently(force = false): Promise<{
   status: "skipped" | "refreshed" | "failed";
   refreshedAt?: number;
@@ -205,36 +190,10 @@ export async function maybeRefreshOwnerRecently(force = false): Promise<{
   ) {
     return { status: "skipped", refreshedAt: existing.refreshedAt };
   }
-  try {
-    const res = await spotifyShowcaseFetch(
-      "/me/player/recently-played?limit=20",
-    );
-    if (!res || !res.ok) {
-      return { status: "failed", reason: `status=${res?.status ?? "null"}` };
-    }
-    const data = (await res.json()) as SpotifyRecentlyResponse;
-    const items: OwnerRecentlyItem[] = (data.items ?? []).map((item) => ({
-      playedAt: item.played_at,
-      track: {
-        name: item.track.name,
-        uri: item.track.uri,
-        artists: (item.track.artists ?? []).map((a) => a.name),
-        image: item.track.album?.images?.[0]?.url ?? null,
-      },
-    }));
-    if (items.length === 0) {
-      // Don't overwrite a good prior snapshot with empties (token dead /
-      // rate-limited / Spotify hiccup).
-      return { status: "failed", reason: "empty" };
-    }
-    const refreshedAt = Date.now();
-    await writeOwnerRecently({
-      version: OWNER_RECENTLY_VERSION,
-      refreshedAt,
-      items,
-    });
-    return { status: "refreshed", refreshedAt };
-  } catch (err) {
-    return { status: "failed", reason: String(err) };
+  const ok = await refreshOwnerRecentlyFromSpotify();
+  if (!ok) {
+    return { status: "failed", reason: "spotify-fetch-failed-or-empty" };
   }
+  const after = await readOwnerRecently();
+  return { status: "refreshed", refreshedAt: after?.refreshedAt };
 }

@@ -1,7 +1,9 @@
 // Persistent (Blob-backed) cache of the owner's recently-played feed.
-// Refreshed daily by the cron — visitor traffic reads from the blob
-// instead of hitting Spotify directly. Recently-played changes more
-// often than top-artists, so the refresh window is daily (not weekly).
+// Refreshed daily by the cron AND opportunistically by reads via
+// readOwnerRecentlyFresh() — visitor traffic reads from the blob
+// instead of hitting Spotify directly, but a stale-while-revalidate
+// path keeps the data fresh whenever someone's actually looking at
+// the page.
 //
 // Storage parallels lib/owner-top-store.ts: Vercel Blob in prod
 // (BLOB_READ_WRITE_TOKEN), local file in dev. Read-cached in-process
@@ -9,6 +11,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { spotifyShowcaseFetch } from "./spotify-showcase";
 
 export const OWNER_RECENTLY_VERSION = 1;
 
@@ -97,4 +100,88 @@ export async function writeOwnerRecently(snap: OwnerRecentlyBlob): Promise<{
   }
   await writeFile(LOCAL_PATH, json, "utf8");
   return { mode: "local", path: LOCAL_PATH };
+}
+
+// Default stale-while-revalidate window for visitor reads. Five
+// minutes is short enough that the showcase recently-played list
+// visibly updates while a visitor is on the page, and long enough
+// that bursty traffic doesn't stampede Spotify (the inflight promise
+// below dedupes concurrent refreshes regardless).
+export const SWR_STALE_AFTER_MS = 5 * 60 * 1000;
+
+// Module-scope inflight promise so concurrent visitors who all see a
+// stale Blob share a single Spotify refresh call. Cleared in the
+// finally block.
+let inflightRefresh: Promise<void> | null = null;
+
+type SpotifyRecentlyResponse = {
+  items?: {
+    played_at: string;
+    track: {
+      name: string;
+      uri: string;
+      artists?: { name: string }[];
+      album?: { images?: { url: string }[] };
+    };
+  }[];
+};
+
+// Pull the latest 20 plays from Spotify (using the showcase token)
+// and write them to Blob. Returns true on success. Used by the cron
+// for guaranteed-daily freshness AND by readOwnerRecentlyFresh below
+// for opportunistic on-visit refresh.
+export async function refreshOwnerRecentlyFromSpotify(): Promise<boolean> {
+  try {
+    const res = await spotifyShowcaseFetch(
+      "/me/player/recently-played?limit=20",
+    );
+    if (!res || !res.ok) return false;
+    const data = (await res.json()) as SpotifyRecentlyResponse;
+    const items: OwnerRecentlyItem[] = (data.items ?? []).map((item) => ({
+      playedAt: item.played_at,
+      track: {
+        name: item.track.name,
+        uri: item.track.uri,
+        artists: (item.track.artists ?? []).map((a) => a.name),
+        image: item.track.album?.images?.[0]?.url ?? null,
+      },
+    }));
+    if (items.length === 0) return false; // never overwrite with empties
+    await writeOwnerRecently({
+      version: OWNER_RECENTLY_VERSION,
+      refreshedAt: Date.now(),
+      items,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Returns the latest snapshot, refreshing it from Spotify if it's
+// older than maxAgeMs. Concurrent callers share one inflight refresh.
+// Best-effort — if the refresh fails (rate-limit, token dead), we
+// return whatever's currently in Blob.
+export async function readOwnerRecentlyFresh(
+  maxAgeMs: number = SWR_STALE_AFTER_MS,
+): Promise<OwnerRecentlyBlob | null> {
+  const existing = await readOwnerRecently();
+  const isStale =
+    !existing || Date.now() - existing.refreshedAt > maxAgeMs;
+  if (!isStale) return existing;
+
+  if (!inflightRefresh) {
+    inflightRefresh = refreshOwnerRecentlyFromSpotify()
+      .then(() => {})
+      .finally(() => {
+        inflightRefresh = null;
+      });
+  }
+  // Wait for the refresh, but don't pin the response indefinitely if
+  // Spotify is slow — fall back to the stale Blob after 2.5s.
+  await Promise.race([
+    inflightRefresh,
+    new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+  ]);
+  return readOwnerRecently();
 }
