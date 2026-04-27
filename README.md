@@ -2,10 +2,12 @@
 
 A 3D starfield of your Spotify listening history.
 
+**Live demo:** [lyra00.vercel.app](https://lyra00.vercel.app)
+
 Lyra parses your full streaming history locally, enriches it with
 Last.fm genres, and renders it as a force-directed 3D graph of artists
-or tracks linked by shared genre. The track currently playing on
-Spotify pulses live inside the constellation.
+or tracks linked by shared genre. When you're signed in, the track
+currently playing on Spotify pulses live inside the constellation.
 
 ## Features
 
@@ -18,8 +20,10 @@ Spotify pulses live inside the constellation.
   and tag chips. Color by primary genre or by detected community.
 - **Co-played overlay** — click any node to highlight tracks/artists
   frequently played together in the same session.
-- **Showcase mode** — let visitors see your live listening + a baked
+- **Showcase mode** — let visitors see your top artists and a baked
   snapshot of your constellation without forcing them to log in.
+  (Currently-playing is signed-in-only, so anonymous visitors never
+  see what you're listening to in real time.)
 - **Share a constellation** — anyone with their own uploaded library
   can publish a `/share/{id}` link rendering their full graph.
 
@@ -74,10 +78,14 @@ Open http://127.0.0.1:3000 and click **Connect Spotify**.
 
 ## Showcase mode (optional, for public deployments)
 
-Showcase mode lets unauthenticated visitors see *your* listening — live
-now-playing, recents, top artists, and your full track constellation —
-when they hit a deployed Lyra. Authenticated visitors keep seeing their
-own data; the showcase is the fallback.
+Showcase mode lets unauthenticated visitors see *your* recently played,
+top artists, and full track constellation when they hit a deployed
+Lyra. Authenticated visitors see their own data instead.
+
+Currently-playing track is **owner-only** — anonymous visitors never
+see what you're listening to in real time. Top artists are baked into
+Vercel Blob and refreshed weekly by a cron, so visitor traffic doesn't
+hit the Spotify API directly.
 
 The setup is documented step-by-step in **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 Short version:
@@ -88,8 +96,9 @@ Short version:
   login — gives the server access to your now-playing / top items.
 - `BLOB_READ_WRITE_TOKEN` (Vercel Blob) stores the baked library
   snapshot and any user-published `/share/{id}` constellations.
-- `CRON_SECRET` authorizes the 6-hour cron that warms the showcase
-  cache on Vercel.
+- `CRON_SECRET` authorizes the daily Vercel cron that warms the
+  showcase cache and re-bakes the owner's top-artists snapshot to
+  Vercel Blob once a week.
 
 Without `SHOWCASE_REFRESH_TOKEN`, anonymous visitors just see empty
 cards — nothing else breaks.
@@ -123,7 +132,12 @@ architecture:
 - Dev mode is capped at **5 users per app** and requires Premium.
   Extended-quota access is no longer available for personal projects.
 - Playback has **no webhooks** — `/me/player/currently-playing` is
-  polled every ~1.5–2s, with module-scope deduplication on the server.
+  polled every 5s, with progress-bar interpolation between polls so
+  the UI stays smooth.
+- **Rate-limit handling** is layered: per-token cooldowns honor
+  `Retry-After`, top artists / recently-played are cached client-side
+  in localStorage (6h / 30min TTL), and the owner's top artists are
+  baked weekly to Vercel Blob so visitor traffic never hits Spotify.
 - OAuth requires `127.0.0.1` (not `localhost`) for HTTP redirects, or
   HTTPS for production.
 
