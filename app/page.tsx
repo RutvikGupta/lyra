@@ -114,10 +114,10 @@ export default async function Home({
             kivtur00's data via the showcase fallback, not the visitor's
             until they Connect Spotify. */}
         {!authed && (
-          <div className="-mb-4 flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-[var(--muted)]">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
-            Cards below show kivtur00&apos;s top listens — Connect Spotify
-            above to see yours.
+          <div className="-mb-4 flex items-center gap-2.5 self-start rounded-full border border-white/10 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-[var(--muted)]">
+            <span className="inline-block h-2 w-2 rounded-full bg-[var(--brand)]" />
+            Cards below show kivtur00&apos;s live streaming — Connect
+            Spotify above to see yours.
           </div>
         )}
 
