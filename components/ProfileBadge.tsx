@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { clearAllLyraCache } from "@/lib/client-cache";
 
 type Profile = {
   authenticated: boolean;
@@ -120,30 +121,98 @@ export default function ProfileBadge() {
     );
   }
 
-  const inner = (
-    <div className="flex items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-1 pr-3 text-sm transition-colors hover:bg-white/[0.08]">
-      {profile.image ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={profile.image}
-          alt=""
-          className="h-7 w-7 flex-shrink-0 rounded-full"
-        />
-      ) : (
-        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-bold text-black">
-          {profile.name.slice(0, 1).toUpperCase()}
-        </span>
+  return <AuthedBadge profile={profile} />;
+}
+
+function AuthedBadge({ profile }: { profile: Profile }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: MouseEvent | TouchEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (menuRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Wipe every "lyra:*" localStorage entry before the form POST so the
+  // next account signing in on this browser sees a fresh start (no
+  // stale top-artists, no stale profile name flashing).
+  function onLogoutSubmit() {
+    clearAllLyraCache();
+  }
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex cursor-pointer items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-1 pr-3 text-sm transition-colors hover:bg-white/[0.08]"
+      >
+        {profile.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={profile.image}
+            alt=""
+            className="h-7 w-7 flex-shrink-0 rounded-full"
+          />
+        ) : (
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-bold text-black">
+            {profile.name?.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <span className="font-semibold text-white">{profile.name}</span>
+        <span aria-hidden className="text-[10px] text-[var(--muted)]">▾</span>
+      </button>
+
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-2 flex w-44 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/85 text-sm shadow-xl backdrop-blur-md"
+        >
+          {profile.profileUrl && (
+            <a
+              role="menuitem"
+              href={profile.profileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3.5 py-2.5 text-left font-medium text-white/90 transition-colors hover:bg-white/[0.08]"
+              onClick={() => setOpen(false)}
+            >
+              Open in Spotify
+            </a>
+          )}
+          <form action="/api/auth/logout" method="POST" onSubmit={onLogoutSubmit}>
+            <button
+              role="menuitem"
+              type="submit"
+              className="w-full cursor-pointer border-t border-white/[0.06] px-3.5 py-2.5 text-left font-medium text-white/90 transition-colors hover:bg-white/[0.08]"
+            >
+              Log out
+            </button>
+          </form>
+        </div>
       )}
-      <span className="font-semibold text-white">{profile.name}</span>
     </div>
   );
-
-  if (profile.profileUrl) {
-    return (
-      <a href={profile.profileUrl} target="_blank" rel="noreferrer">
-        {inner}
-      </a>
-    );
-  }
-  return inner;
 }

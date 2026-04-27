@@ -59,3 +59,20 @@ export function clearCache(key: string) {
     // ignore
   }
 }
+
+// Clear every "lyra:*" entry. Called on logout so a different account
+// signing in on the same browser doesn't see cached top artists or
+// recently-played from the previous user.
+export function clearAllLyraCache() {
+  if (typeof window === "undefined") return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith("lyra:")) keys.push(k);
+    }
+    for (const k of keys) window.localStorage.removeItem(k);
+  } catch {
+    // quota / private mode — non-fatal
+  }
+}
