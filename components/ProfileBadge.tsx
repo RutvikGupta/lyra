@@ -37,7 +37,7 @@ export default function ProfileBadge() {
   // button so the owner can wire up the showcase refresh token, and so
   // visitors can hop straight into /upload after auth if they want their
   // own data.
-  if (!profile.authenticated || !profile.name) {
+  if (!profile.authenticated) {
     return (
       <a
         href="/api/auth/login"
@@ -45,6 +45,21 @@ export default function ProfileBadge() {
       >
         Connect Spotify
       </a>
+    );
+  }
+
+  // Authed but no name yet — Spotify is rate-limiting /me so /api/profile
+  // returned the empty-shell {authenticated: true} response. Show a
+  // neutral "Connected" pill rather than falling through to "Connect
+  // Spotify" (which would mislead a logged-in user into reconnecting and
+  // making the rate-limit worse). The RateLimitChip explains *why*
+  // there's no name yet.
+  if (!profile.name) {
+    return (
+      <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-sm font-semibold text-white/85">
+        <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+        <span>Connected</span>
+      </div>
     );
   }
 
