@@ -63,13 +63,13 @@ type CurrentTrack = {
   albumImage?: string;
 };
 
-// Constellation poll: 5s. The matched-node halo's pulse is animated
+// Constellation poll: 3s. The matched-node halo's pulse is animated
 // in a local RAF loop independent of this poll, so the visual
 // pulsation looks the same regardless of poll cadence — only the
-// "which node should be glowing" detection refreshes here. Pairs with
-// NowPlaying.tsx on the home page; combined cuts ~70% of /me requests
-// per authed session, well under Spotify's rolling-window threshold.
-const NOW_PLAYING_POLL_MS = 5000;
+// "which node should be glowing" detection refreshes here. Matches
+// NowPlaying.tsx; even with both polling at 3s and a few tabs open
+// this stays well under Spotify's per-token rolling-window limit.
+const NOW_PLAYING_POLL_MS = 3000;
 
 // Coarse mobile detection — used to dial back mesh resolution and the
 // background starfield density. Lower-end mobile GPUs choke on the default
@@ -258,23 +258,48 @@ export default function Starfield({
           if (!history || history.plays.length === 0) {
             let snap: SharedLibrarySnapshot | null = sharedLibrary;
             if (!snap) {
-              const sr = await fetch("/api/showcase/library", {
-                cache: "no-store",
-              });
-              if (sr.status === 404) {
-                if (!cancelled)
-                  setError(
-                    "No uploaded history found. Drop your Spotify ZIP on the upload page first.",
-                  );
-                return;
+              // Cache the showcase library snapshot client-side. Owner
+              // re-publishes manually (no cron rewrite), so it's safe
+              // to read from cache for an hour without going to the
+              // server. Saves a function invocation + 67 KB transfer
+              // for return visitors.
+              const SHOWCASE_LIB_KEY = "lyra:showcase-library";
+              const SHOWCASE_LIB_TTL = 60 * 60 * 1000; // 1 hour
+              const fresh = readFreshCache<SharedLibrarySnapshot>(
+                SHOWCASE_LIB_KEY,
+                SHOWCASE_LIB_TTL,
+              );
+              if (fresh) {
+                snap = fresh;
+              } else {
+                const sr = await fetch("/api/showcase/library", {
+                  cache: "no-store",
+                });
+                if (sr.status === 404) {
+                  if (!cancelled)
+                    setError(
+                      "No uploaded history found. Drop your Spotify ZIP on the upload page first.",
+                    );
+                  return;
+                }
+                if (!sr.ok) {
+                  // Fall back to a stale cached snapshot if we have one,
+                  // rather than blanking the page on a transient error.
+                  const stale =
+                    readStaleCache<SharedLibrarySnapshot>(SHOWCASE_LIB_KEY);
+                  if (stale) {
+                    snap = stale;
+                  } else {
+                    if (!cancelled)
+                      setError(`Showcase library fetch failed (${sr.status})`);
+                    return;
+                  }
+                } else {
+                  snap = (await sr.json()) as SharedLibrarySnapshot;
+                  if (cancelled) return;
+                  writeCache(SHOWCASE_LIB_KEY, snap);
+                }
               }
-              if (!sr.ok) {
-                if (!cancelled)
-                  setError(`Showcase library fetch failed (${sr.status})`);
-                return;
-              }
-              snap = (await sr.json()) as SharedLibrarySnapshot;
-              if (cancelled) return;
             }
 
             const artistGenres = new Map<string, string[]>(

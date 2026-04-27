@@ -21,10 +21,10 @@ type Snapshot = { state: NowPlayingState; fetchedAt: number };
 // TICK_MS below): every 250ms we bump a counter so the bar re-renders
 // using `Date.now() - fetchedAt`, drifting smoothly forward without a
 // network call. That decouples server-poll frequency from visual
-// smoothness, so we can poll every 5s for actual track changes (down
-// from 1.5s, ~70% fewer requests against /me) without the bar ever
-// looking jumpy.
-const POLL_MS = 5000;
+// smoothness. 3s poll is well under Spotify's per-token rate limit
+// (~180 calls / 30s rolling window for /me*) — even with multiple
+// tabs open it's a small fraction of the budget.
+const POLL_MS = 3000;
 const TICK_MS = 250;
 
 export default function NowPlaying() {
