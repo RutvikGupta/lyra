@@ -568,6 +568,11 @@ export default function Starfield({
               }
               return next;
             });
+          } else if (data?.rateLimited) {
+            // Spotify is briefly throttling /me/player/currently-playing.
+            // Don't drop the halo — the next tick will re-fetch. Matches
+            // NowPlaying.tsx's same-snap behavior so the constellation
+            // doesn't flicker the highlight off mid-song.
           } else {
             setCurrentTrack(null);
           }
