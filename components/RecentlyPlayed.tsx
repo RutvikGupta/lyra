@@ -17,13 +17,11 @@ type Item = {
   };
 };
 
-// Recently-played updates whenever the user finishes a track. 2 min
-// TTL keeps the list usefully fresh during an active listening session
-// — a typical pop song is ~3 min, so the list updates within roughly
-// one track's worth of latency. Polled on the same cadence so a user
-// with the tab open sees new tracks without manually refreshing.
-const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
-const POLL_MS = 2 * 60 * 1000;
+// Recently-played updates whenever the user finishes a track. 1-min
+// TTL + poll cadence keeps the list visibly fresh during an active
+// listening session — new tracks show up within ~1 min of finishing.
+const CACHE_TTL = 60 * 1000; // 1 minute
+const POLL_MS = 60 * 1000;
 const CACHE_KEY = "lyra:recently-played";
 
 export default function RecentlyPlayed() {
