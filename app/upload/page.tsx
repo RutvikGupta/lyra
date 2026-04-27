@@ -35,9 +35,10 @@ export default function UploadPage() {
             </span>
           </h1>
           <p className="max-w-2xl text-base leading-relaxed text-[var(--muted)]">
-            Drop the ZIP Spotify emailed you (or the JSON files inside it).
-            Parsing happens entirely in your browser — your data never leaves
-            this tab.
+            Drop the data export from Spotify (ZIP or JSON files) or
+            Apple Music (ZIP or CSV files). Parsing happens entirely in
+            your browser — your data never leaves this tab, and no
+            sign-in is required.
           </p>
         </header>
 

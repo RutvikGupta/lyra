@@ -75,6 +75,13 @@ export default function ShowcaseOwnerBanner({
     scope === "explore"
       ? `${ownerName}'s top artists`
       : `${ownerName}'s library`;
+  // /explore needs Spotify auth to render the *visitor's* top artists
+  // (no upload path replaces it). /library, by contrast, accepts an
+  // uploaded data ZIP without sign-in — point visitors at /upload
+  // instead of asking them to log in.
+  const ctaHref = scope === "explore" ? "/api/auth/login" : "/upload";
+  const ctaLabel =
+    scope === "explore" ? "Sign in for yours" : "Upload yours";
 
   return (
     <div
@@ -92,6 +99,12 @@ export default function ShowcaseOwnerBanner({
         className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--brand)]"
       />
       <span className="truncate">Viewing {subject}</span>
+      <a
+        href={ctaHref}
+        className="ml-1 flex-shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white transition-colors hover:bg-white/20"
+      >
+        {ctaLabel}
+      </a>
     </div>
   );
 }

@@ -174,10 +174,12 @@ function RankedList({ title, items }: { title: string; items: Row[] }) {
 function sourceLabel(source: StoredHistory["source"]): string {
   switch (source) {
     case "extended":
-      return "Extended Streaming History";
+      return "Spotify · Extended Streaming History";
     case "account":
-      return "Account Data (12 months)";
+      return "Spotify · Account Data (12 months)";
     case "mixed":
-      return "Extended + Account Data";
+      return "Spotify · Extended + Account (or mixed Spotify + Apple Music)";
+    case "apple-music":
+      return "Apple Music · Play Activity";
   }
 }

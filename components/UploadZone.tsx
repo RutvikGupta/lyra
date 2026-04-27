@@ -88,7 +88,7 @@ export default function UploadZone() {
           ref={inputRef}
           type="file"
           multiple
-          accept=".zip,.json,application/zip,application/json"
+          accept=".zip,.json,.csv,application/zip,application/json,text/csv"
           className="sr-only"
           disabled={parsing}
           onChange={(e) => handleFiles(e.target.files)}
@@ -107,19 +107,20 @@ export default function UploadZone() {
         ) : (
           <>
             <div className="text-base font-semibold text-white">
-              Drop your Spotify data ZIP here
+              Drop your Spotify or Apple Music data here
             </div>
             <div className="max-w-md text-sm text-[var(--muted)]">
-              Or click to choose. Drop the ZIP Spotify emailed you, or the
-              individual{" "}
+              Or click to choose. Works with the{" "}
+              <strong className="text-white">Spotify</strong> ZIP / its{" "}
               <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
                 StreamingHistory*.json
               </code>{" "}
-              /{" "}
+              files, or the <strong className="text-white">Apple Music</strong>{" "}
+              ZIP from privacy.apple.com / its{" "}
               <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
-                Streaming_History_Audio_*.json
-              </code>{" "}
-              files. Everything stays in your browser.
+                Apple Music Play Activity.csv
+              </code>
+              . Everything stays in your browser — no sign-in needed.
             </div>
           </>
         )}
@@ -134,7 +135,7 @@ export default function UploadZone() {
 
       <details className="rounded-xl border border-white/[0.06] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]">
         <summary className="cursor-pointer font-medium text-white">
-          Don&apos;t have your data yet?
+          Don&apos;t have your data yet? (Spotify)
         </summary>
         <ol className="mt-3 list-decimal space-y-1.5 pl-5">
           <li>
@@ -165,6 +166,40 @@ export default function UploadZone() {
           <li>Confirm via the email Spotify sends</li>
           <li>
             When the second email arrives with the ZIP, drop it on this page
+          </li>
+        </ol>
+      </details>
+
+      <details className="rounded-xl border border-white/[0.06] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]">
+        <summary className="cursor-pointer font-medium text-white">
+          Don&apos;t have your data yet? (Apple Music)
+        </summary>
+        <ol className="mt-3 list-decimal space-y-1.5 pl-5">
+          <li>
+            Go to{" "}
+            <a
+              href="https://privacy.apple.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--brand)] underline hover:no-underline"
+            >
+              privacy.apple.com
+            </a>{" "}
+            → sign in with your Apple ID
+          </li>
+          <li>
+            Pick <em>Request a copy of your data</em> →{" "}
+            <strong className="text-white">Apple Media Services</strong>{" "}
+            (covers Apple Music)
+          </li>
+          <li>Apple emails when ready — usually within ~7 days</li>
+          <li>
+            Drop the ZIP here, or pull{" "}
+            <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
+              Apple Music Play Activity.csv
+            </code>{" "}
+            out of it and drop that. Daily aggregates and recently-played
+            CSVs also work.
           </li>
         </ol>
       </details>

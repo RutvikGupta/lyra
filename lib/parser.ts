@@ -1,4 +1,8 @@
 import { unzip } from "fflate";
+import {
+  detectAppleMusicFile,
+  parseAppleMusicCsv,
+} from "./apple-music-parser";
 import type { Artist, ParsedHistory, Play, Track } from "./types";
 
 const MIN_MS_PLAYED = 30_000;
@@ -33,6 +37,7 @@ export async function parseFiles(
 ): Promise<ParsedHistory> {
   onProgress("Reading files…");
   const jsonContents: { name: string; text: string }[] = [];
+  const appleCsvContents: { name: string; text: string }[] = [];
 
   for (const file of files) {
     if (file.name.toLowerCase().endsWith(".zip")) {
@@ -45,26 +50,42 @@ export async function parseFiles(
             name: path,
             text: new TextDecoder().decode(data),
           });
+        } else if (
+          path.toLowerCase().endsWith(".csv") &&
+          detectAppleMusicFile(path) !== "unknown"
+        ) {
+          appleCsvContents.push({
+            name: path,
+            text: new TextDecoder().decode(data),
+          });
         }
       }
     } else if (file.name.toLowerCase().endsWith(".json")) {
       jsonContents.push({ name: file.name, text: await file.text() });
+    } else if (file.name.toLowerCase().endsWith(".csv")) {
+      appleCsvContents.push({ name: file.name, text: await file.text() });
     }
   }
 
-  if (jsonContents.length === 0) {
+  if (jsonContents.length === 0 && appleCsvContents.length === 0) {
     throw new Error(
-      "No streaming history JSON files found. Drop the ZIP from Spotify, or the StreamingHistory*.json / Streaming_History_Audio_*.json files directly.",
+      "No streaming history files found. Drop the ZIP from Spotify (or its " +
+        "StreamingHistory*.json files), or the Apple Music data ZIP from " +
+        "privacy.apple.com (or its 'Apple Music Play Activity.csv').",
     );
   }
 
   await yieldToUi();
-  onProgress(`Parsing ${jsonContents.length} file(s)…`);
+  onProgress(
+    `Parsing ${jsonContents.length + appleCsvContents.length} file(s)…`,
+  );
 
   const plays: Play[] = [];
   let foundExtended = false;
   let foundAccount = false;
+  let foundAppleMusic = false;
 
+  // Spotify JSON path
   for (const { name, text } of jsonContents) {
     onProgress(`Parsing ${name}…`);
     let arr: unknown;
@@ -109,6 +130,19 @@ export async function parseFiles(
           artistName: entry.artistName ?? "Unknown",
         });
       }
+    }
+    await yieldToUi();
+  }
+
+  // Apple Music CSV path. Same Play[] target, just a different shape on
+  // the wire. Each CSV variant is parsed by apple-music-parser's
+  // dispatch helper.
+  for (const { name, text } of appleCsvContents) {
+    onProgress(`Parsing ${name}…`);
+    const result = parseAppleMusicCsv(name, text);
+    if (result.plays.length > 0) {
+      foundAppleMusic = true;
+      plays.push(...result.plays);
     }
     await yieldToUi();
   }
@@ -173,8 +207,11 @@ export async function parseFiles(
   }
 
   return {
-    source:
-      foundExtended && foundAccount
+    source: foundAppleMusic
+      ? foundExtended || foundAccount
+        ? "mixed"
+        : "apple-music"
+      : foundExtended && foundAccount
         ? "mixed"
         : foundExtended
           ? "extended"

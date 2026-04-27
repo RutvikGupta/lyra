@@ -32,7 +32,11 @@ export type Artist = {
   totalMsPlayed: number;
 };
 
-export type HistorySource = "extended" | "account" | "mixed";
+export type HistorySource =
+  | "extended"
+  | "account"
+  | "mixed"
+  | "apple-music";
 
 export type ParsedHistory = {
   source: HistorySource;
