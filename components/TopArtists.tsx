@@ -33,6 +33,7 @@ type Range = keyof typeof RANGE_LABEL;
 export default function TopArtists() {
   const [items, setItems] = useState<Item[] | null>(null);
   const [authed, setAuthed] = useState(true);
+  const [rateLimited, setRateLimited] = useState(false);
   const [range, setRange] = useState<Range>("long_term");
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export default function TopArtists() {
     // blank; fetch in the background to refresh.
     const stale = readStaleCache<Item[]>(cacheKey);
     setItems(stale ?? null);
+    setRateLimited(false);
 
     // Post-OAuth, Spotify's access token can take a few seconds to be
     // accepted by /me/top/artists. The API returns 503 in that window so
@@ -83,9 +85,11 @@ export default function TopArtists() {
         // cached list rather than blanking. The RateLimitChip explains
         // why the data isn't refreshing.
         if (data.rateLimited && next.length === 0) {
+          setRateLimited(true);
           if (!stale) setItems([]);
           return;
         }
+        setRateLimited(false);
         setItems(next);
         if (next.length > 0) writeCache(cacheKey, next);
       } catch {
@@ -136,7 +140,9 @@ export default function TopArtists() {
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-white/[0.06] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]">
-          No artists yet — Connect Spotify above to see yours.
+          {rateLimited
+            ? "Spotify is rate-limiting your account — your top artists will appear shortly."
+            : "No artists yet — Connect Spotify above to see yours."}
         </div>
       ) : (
         <ol className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
