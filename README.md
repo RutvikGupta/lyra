@@ -118,6 +118,9 @@ first-played timestamps and genre data. Filters that need raw plays
 no-op on shared snapshots — the alternative was inflating snapshot size
 ~100× by shipping every play.
 
+Shares persist for **30 days**, then the daily cron sweeps them. Per-IP
+rate limit on creation: 10 shares/hour.
+
 ## Notes on Spotify Web API in 2026
 
 Spotify removed several endpoints in 2025–2026, which shaped Lyra's

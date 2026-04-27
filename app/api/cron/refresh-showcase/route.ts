@@ -11,6 +11,7 @@ import {
   REFRESH_AFTER_MS,
   writeOwnerTop,
 } from "@/lib/owner-top-store";
+import { deleteShare, listShares } from "@/lib/share-store";
 import type { ArtistApiItem } from "@/lib/showcase-library";
 import {
   enrichArtists,
@@ -57,6 +58,7 @@ export async function GET(req: Request) {
   // budget for no perceptible UX gain.
   const ownerTopRefresh = await maybeRefreshOwnerTop();
   const ownerRecentlyRefresh = await maybeRefreshOwnerRecently();
+  const sharesSweep = await sweepOldShares();
 
   const origin = new URL(req.url).origin;
   const paths = ["/api/showcase/profile"];
@@ -75,10 +77,45 @@ export async function GET(req: Request) {
     refreshedAt: new Date().toISOString(),
     ownerTop: ownerTopRefresh,
     ownerRecently: ownerRecentlyRefresh,
+    sharesSweep,
     results: results.map((r) =>
       r.status === "fulfilled" ? r.value : { error: String(r.reason) },
     ),
   });
+}
+
+const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+async function sweepOldShares(): Promise<{
+  scanned: number;
+  deleted: number;
+  failed: number;
+}> {
+  let scanned = 0;
+  let deleted = 0;
+  let failed = 0;
+  try {
+    const shares = await listShares();
+    scanned = shares.length;
+    const cutoff = Date.now() - SHARE_TTL_MS;
+    const expired = shares.filter((s) => s.uploadedAt < cutoff);
+    // Delete sequentially to avoid Blob API rate-limits on the cron run.
+    // Volume is low enough (a few deletions per day at most) that
+    // serializing is fine.
+    for (const entry of expired) {
+      try {
+        await deleteShare(entry);
+        deleted++;
+      } catch {
+        failed++;
+      }
+    }
+  } catch {
+    // Listing itself failed (Blob outage, etc.) — surface failed:1 so
+    // the cron response makes the issue visible without throwing.
+    failed = 1;
+  }
+  return { scanned, deleted, failed };
 }
 
 const RANGES: TimeRange[] = ["short_term", "medium_term", "long_term"];

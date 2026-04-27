@@ -7,6 +7,10 @@ import { writeShare } from "@/lib/share-store";
 // on Spotify auth — the snapshot itself is what's being shared, not
 // account-linked data. To prevent abuse: snapshot-size cap, random IDs
 // (un-enumerable), and a per-IP rate limit (sliding-window).
+//
+// Lifetime: shares persist for 30 days. The daily cron at
+// /api/cron/refresh-showcase sweeps and deletes anything older than
+// that. If you need permanent shares, drop the sweep step.
 
 const MAX_BYTES = 1_000_000; // 1 MB — top-200 baked snapshots run ~50KB; 20× headroom.
 
