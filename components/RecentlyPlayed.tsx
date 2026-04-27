@@ -17,11 +17,12 @@ type Item = {
   };
 };
 
-// Recently-played updates whenever the user finishes a track, but
-// hammering the API every 5 minutes was burning rate-limit headroom
-// for marginal freshness. Cache for 30 min — fresh on subsequent loads,
-// stale-readable during a throttle.
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+// Recently-played updates whenever the user finishes a track. Cache
+// TTL is short so the list stays usefully fresh while a user is
+// actively listening; the previous 5-min poll was the same effective
+// cadence, just with a forced setInterval — this version skips the
+// network entirely when the cache is still warm.
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const CACHE_KEY = "lyra:recently-played";
 
 export default function RecentlyPlayed() {

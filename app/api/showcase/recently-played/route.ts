@@ -1,9 +1,10 @@
+import { readOwnerRecently } from "@/lib/owner-recently-store";
 import {
   spotifyShowcaseFetch,
   withShowcaseCache,
 } from "@/lib/spotify-showcase";
 
-const TTL_MS = 5 * 60_000; // 5 minutes
+const TTL_MS = 5 * 60_000; // 5 minutes — fallback when Blob is empty
 
 type Item = {
   playedAt: string;
@@ -43,6 +44,12 @@ async function load(): Promise<{ items: Item[] }> {
 }
 
 export async function GET() {
+  // Happy path: the cron has baked the daily snapshot to Blob storage,
+  // so visitor traffic doesn't hit Spotify at all.
+  const baked = await readOwnerRecently();
+  if (baked && baked.items.length > 0) {
+    return Response.json({ items: baked.items });
+  }
   try {
     const payload = await withShowcaseCache("recently-played", TTL_MS, load);
     return Response.json(payload);

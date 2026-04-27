@@ -4,6 +4,7 @@ import {
   isRateLimitedFor,
   REFRESH_COOKIE,
 } from "@/lib/spotify";
+import { readOwnerRecently } from "@/lib/owner-recently-store";
 import { fetchRecentlyPlayed } from "@/lib/spotify-api";
 import {
   showcaseConfigured,
@@ -75,6 +76,18 @@ export async function GET() {
       });
     }
     // Cookie cleared → flow into the showcase branch below.
+  }
+
+  // Prefer the daily-baked Blob snapshot before any live Spotify call.
+  // The shape mirrors the Spotify response → shape() output exactly,
+  // so we can return its items directly.
+  const baked = await readOwnerRecently();
+  if (baked && baked.items.length > 0) {
+    return Response.json({
+      authenticated: false,
+      source: "showcase",
+      items: baked.items,
+    });
   }
 
   if (!showcaseConfigured()) {
