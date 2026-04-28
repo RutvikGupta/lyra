@@ -173,10 +173,16 @@ export function buildTrackGraph(
     const genres =
       artistGenresByLowerName.get(t.artistName.toLowerCase()) ?? [];
     const primaryGenre = genres[0] ?? "unknown";
+    // ForceGraph3D renders radius = nodeRelSize × cbrt(nodeVal), so a
+    // 4× value range (8→32) only becomes a 1.6× visual radius range.
+    // Widen aggressively (range 4→144) so cbrt yields ~3.3× visual
+    // ratio between the smallest and largest nodes — top tracks
+    // visibly tower over the long tail. sqrt keeps the long tail
+    // distinguishable rather than all collapsing onto the floor.
     const size =
       maxMetric > 0
-        ? 8 + Math.sqrt(metric(t) / maxMetric) * 24
-        : 8;
+        ? 4 + Math.sqrt(metric(t) / maxMetric) * 140
+        : 4;
     return {
       id:
         t.uri ??
@@ -258,12 +264,15 @@ export function buildArtistGraph(
   const maxMetric = safe.reduce((m, a) => Math.max(m, metric(a)), 0);
   const nodes: GraphNode[] = safe.map((a) => {
     const primaryGenre = a.genres[0] ?? "unknown";
+    // See buildTrackGraph for why the range is so wide — cbrt in the
+    // renderer flattens nodeVal aggressively, so a small nominal range
+    // produces near-uniform visual radii.
     let size: number;
     if (maxMetric > 0 && metric(a) > 0) {
-      size = 8 + Math.sqrt(metric(a) / maxMetric) * 24;
+      size = 4 + Math.sqrt(metric(a) / maxMetric) * 140;
     } else {
       const cappedRank = Math.min(Math.max(a.rank, 1), 50);
-      size = 8 + ((50 - cappedRank) / 49) * 22;
+      size = 4 + ((50 - cappedRank) / 49) * 140;
     }
     return {
       id: a.id,
