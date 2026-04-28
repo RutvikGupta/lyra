@@ -889,25 +889,27 @@ export default function Starfield({
     if (!linkForce || !chargeForce) return;
 
     const n = graph.nodes.length;
-    // Looser tuning — push connected nodes apart so individual
-    // members of a cluster are clearly distinguishable, and let
-    // long-range repulsion spread distant clusters out across the
-    // canvas. Previous values produced visible blob-merging on
-    // dense-genre libraries.
-    const linkDistance = Math.round(200 + Math.sqrt(n) * 28);
-    const chargeStrength = -(700 + n * 9);
+    // Genre-cluster tuning: short links + strong link spring pull
+    // same-genre neighbors into a tight bunch, while moderate charge
+    // pushes unconnected nodes apart enough to reveal cluster gaps.
+    // forceCollide (set below) handles per-node radius so we can pull
+    // links short without spheres overlapping. Without forceCollide
+    // these distances would produce the blob from earlier.
+    const linkDistance = Math.round(80 + Math.sqrt(n) * 8);
+    const chargeStrength = -(220 + n * 4);
     try {
       linkForce.distance(linkDistance);
       if (typeof linkForce.strength === "function") {
-        // Weaker spring → links don't yank cluster members on top of
-        // each other. Pairs with the higher chargeStrength below.
-        linkForce.strength(0.18);
+        // Strong spring → genre-connected nodes pulled tight into
+        // visually-coherent clusters. forceCollide below stops them
+        // from intersecting at this strength.
+        linkForce.strength(0.7);
       }
       chargeForce.strength(chargeStrength);
-      // Wider repulsion reach so distant clusters spread across the
-      // canvas instead of bunching toward the center.
+      // Cap repulsion reach — keep distant clusters apart but don't
+      // let charge fight the link spring at close range.
       if (typeof chargeForce.distanceMax === "function") {
-        chargeForce.distanceMax(900);
+        chargeForce.distanceMax(500);
       }
       // Collision force — d3-force-3d doesn't know about node radii,
       // so without this large nodes happily occupy the same space
