@@ -1048,11 +1048,13 @@ export default function Starfield({
             if (!source) return "rgba(255,255,255,0.45)";
             return clusterOverride?.get(source.id) ?? source.color;
           }}
-          linkOpacity={0.55}
+          linkOpacity={0.6}
           linkWidth={(l: object) => {
             const link = l as GraphLink;
-            // Width by Jaccard similarity (0.35..1.0) → 1.5..4 px range.
-            return 1.5 + link.jaccard * 2.5;
+            // Width by Jaccard similarity (0.28..1.0) → 2.5..6 px range.
+            // Slightly chunkier than before so edges read clearly at
+            // the shorter link distance + larger node radii.
+            return 2.5 + link.jaccard * 3.5;
           }}
           linkLabel={(l: object) => {
             const link = l as Omit<GraphLink, "source" | "target"> & {
