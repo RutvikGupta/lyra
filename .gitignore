@@ -43,6 +43,12 @@ yarn-error.log*
 /public/showcase-library.json
 /public/shares/
 
+# Personal-data fixture generated from a user's Spotify export. The
+# small synthetic /fixtures/Apple Music Play Activity.csv stays
+# committed for parser tests, but the full conversion of someone's
+# real history must not.
+/fixtures/Apple Music Play Activity (from Spotify).csv
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
