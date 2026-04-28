@@ -1,44 +1,34 @@
-// One-shot script to exercise the Apple Music parser with synthetic
-// data shaped like an actual export. Run with:
+// One-shot test for the Apple Music parser. Verifies the schemas
+// match real Apple exports (Play Activity uses Song Name +
+// Container Artist Name; Recently Played + Daily Tracks use
+// Track Description in "Artist - Song" format).
 //
-//   npx tsx scripts/test-apple-parser.mjs
-//
-// Prints a summary of the parsed plays + aggregated tracks/artists so
-// we can sanity-check the end-to-end shape without having to drag a
-// real CSV onto the dev server.
+// Run with:
+//   node --experimental-strip-types --no-warnings scripts/test-apple-parser.mjs
 
-import {
-  parseAppleMusicCsv,
-} from "../lib/apple-music-parser.ts";
+import { parseAppleMusicCsv } from "../lib/apple-music-parser.ts";
 
-// Realistic-looking Play Activity CSV. Column names match Apple's
-// 2023+ export schema. Includes a few quirks worth testing:
-//   - quoted field with embedded comma
-//   - escaped double-quote ("")
-//   - Track Description in "Song by Artist" form
-//   - mix of PLAY_END (kept) and PAUSE (dropped)
-//   - completed vs. not completed
-const playActivityCsv = `"Apple Id Number","Track Description","Container Description","Container Type","End Position In Milliseconds","End Reason Type","Event End Timestamp","Event Type","Hardware Type","Item Type","Media Duration In Milliseconds","Media Type","Played Completely","Source Type","Store Country Name"
-"123","Bohemian Rhapsody by Queen","A Night at the Opera","ALBUM","354000","NATURAL_END_OF_TRACK","2024-03-15T18:42:31Z","PLAY_END","iPhone","SONG","354000","SONG","TRUE","LIBRARY","USA"
-"123","Cigarette Daydreams by Cage The Elephant","Melophobia","ALBUM","235000","NATURAL_END_OF_TRACK","2024-03-15T18:48:10Z","PLAY_END","iPhone","SONG","235000","SONG","TRUE","LIBRARY","USA"
-"123","Stronger by Kanye West","Graduation","ALBUM","312000","TRACK_SKIPPED_FORWARDS","2024-03-15T18:52:22Z","PLAY_END","iPhone","SONG","312000","SONG","FALSE","LIBRARY","USA"
-"123","Cigarette Daydreams by Cage The Elephant","Melophobia","ALBUM","235000","NATURAL_END_OF_TRACK","2024-03-16T09:14:55Z","PLAY_END","iPhone","SONG","235000","SONG","TRUE","LIBRARY","USA"
-"123","Watermelon Sugar by Harry Styles","Fine Line","ALBUM","174000","NATURAL_END_OF_TRACK","2024-03-16T09:18:01Z","PLAY_END","iPhone","SONG","174000","SONG","TRUE","LIBRARY","USA"
-"123","Watermelon Sugar by Harry Styles","Fine Line","ALBUM","45000","TRACK_SKIPPED_FORWARDS","2024-03-16T09:18:46Z","PAUSE","iPhone","SONG","174000","SONG","FALSE","LIBRARY","USA"
-"123","Sweet Caroline by Neil Diamond","Brother Love's Travelling Salvation Show","ALBUM","202000","NATURAL_END_OF_TRACK","2024-03-17T12:00:00Z","PLAY_END","iPhone","SONG","202000","SONG","TRUE","LIBRARY","USA"
-"123","Title, with comma by Some Artist","An Album, with comma","ALBUM","180000","NATURAL_END_OF_TRACK","2024-03-17T12:05:00Z","PLAY_END","iPhone","SONG","180000","SONG","TRUE","LIBRARY","USA"
-"123","Title with ""quotes"" by Another Artist","Quoted Album","ALBUM","220000","NATURAL_END_OF_TRACK","2024-03-17T12:10:00Z","PLAY_END","iPhone","SONG","220000","SONG","TRUE","LIBRARY","USA"
+// --- Play Activity (real schema) ---
+const playActivityCsv = `Album Name,Apple ID Number,Container Artist Name,Container Type,End Position In Milliseconds,End Reason Type,Event End Timestamp,Event Type,Media Duration In Milliseconds,Play Duration Milliseconds,Song Name
+A Night at the Opera,0,Queen,ALBUM,354000,NATURAL_END_OF_TRACK,2024-03-15T18:42:31Z,PLAY_END,354000,354000,Bohemian Rhapsody
+Melophobia,0,Cage The Elephant,ALBUM,235000,NATURAL_END_OF_TRACK,2024-03-15T18:48:10Z,PLAY_END,235000,235000,Cigarette Daydreams
+Graduation,0,Kanye West,ALBUM,312000,TRACK_SKIPPED_FORWARDS,2024-03-15T18:52:22Z,PLAY_END,312000,312000,Stronger
+Fine Line,0,Harry Styles,ALBUM,45000,TRACK_SKIPPED_FORWARDS,2024-03-15T18:53:00Z,PAUSE,174000,45000,Watermelon Sugar
+"An Album, with comma",0,Some Artist,ALBUM,180000,NATURAL_END_OF_TRACK,2024-03-15T19:00:00Z,PLAY_END,180000,180000,"Title, with comma"
+Quoted Album,0,Another Artist,ALBUM,220000,NATURAL_END_OF_TRACK,2024-03-15T19:05:00Z,PLAY_END,220000,220000,"Title with ""quotes"""
+,0,,,,,2024-03-15T19:10:00Z,PLAY_END,200000,200000,Orphaned Track
 `;
 
-const recentlyCsv = `"Track Description","Container Description","Last Played Date"
-"Bohemian Rhapsody by Queen","A Night at the Opera","2024-03-15T18:42:31Z"
-"Stronger by Kanye West","Graduation","2024-03-15T18:52:22Z"
+const recentlyCsv = `Last Modified,Container Type,Container Description,Track Description,Country,First Event Timestamp,Last End Reason Tyoe,Last Event End Timestamp,Total plays,Total play duration in millis
+2024-03-24T04:00:52.889Z,Album,Joe Hisaishi - Spirited Away (Original Soundtrack),Joe Hisaishi - The Stink God,United States,2024-03-24T04:00:52.889Z,PLAYBACK_MANUALLY_PAUSED,2024-03-24T04:03:41.580Z,2,168691
+2024-03-24T03:58:25.955Z,Album,Joe Hisaishi - Spirited Away (Original Soundtrack),Joe Hisaishi - It's Hard Work,United States,2024-03-24T03:58:25.955Z,NATURAL_END_OF_TRACK,2024-03-24T04:00:52.896Z,1,146941
+2024-03-25T14:00:00.000Z,Album,Queen - A Night at the Opera,Queen - Bohemian Rhapsody,United States,2024-03-25T14:00:00.000Z,NATURAL_END_OF_TRACK,2024-03-25T14:06:00.000Z,3,1062000
 `;
 
-const dailyCsv = `"Track Description","Date Played","Hours","Plays"
-"Bohemian Rhapsody by Queen","20240315","0.118","2"
-"Cigarette Daydreams by Cage The Elephant","20240316","0.130","2"
-"Watermelon Sugar by Harry Styles","20240316","0.058","1"
+const dailyCsv = `Country,Track Identifier,Media type,Date Played,Hours,Play Duration Milliseconds,End Reason Type,Source Type,Play Count,Skip Count,Track Description
+United States,978194965,N/A,20150630,"18, 19",1664000,NATURAL_END_OF_TRACK,IPHONE,7,4,Brian Eno - 1/2
+United States,724436401,N/A,20150630,16,565000,NATURAL_END_OF_TRACK,IPHONE,4,3,The Beatles - Hey Jude
+United States,123,N/A,20150701,12,235000,NATURAL_END_OF_TRACK,IPHONE,1,0,Cage The Elephant - Cigarette Daydreams
 `;
 
 function check(label, condition, detail = "") {
@@ -48,50 +38,54 @@ function check(label, condition, detail = "") {
 }
 
 // --- Play Activity ---
-console.log("\n=== Apple Music Play Activity.csv ===");
+console.log("\n=== Apple Music Play Activity.csv (real schema) ===");
 const pa = parseAppleMusicCsv(
   "Apple Music Play Activity.csv",
   playActivityCsv,
 );
 console.log(`kind: ${pa.kind}, plays: ${pa.plays.length}`);
 check("kind detected as play-activity", pa.kind === "play-activity");
-// We expect 8 plays (9 rows minus the PAUSE row).
-check("PAUSE row dropped", pa.plays.length === 8, `got ${pa.plays.length}`);
-const titles = new Set(pa.plays.map((p) => p.trackName));
+// 7 rows minus 1 PAUSE = 6 plays
+check("PAUSE row dropped", pa.plays.length === 6, `got ${pa.plays.length}`);
+const queen = pa.plays.find((p) => p.trackName === "Bohemian Rhapsody");
 check(
-  "title with embedded comma parsed",
-  titles.has("Title, with comma"),
-  Array.from(titles).join(" | "),
+  "Song Name → trackName",
+  queen?.trackName === "Bohemian Rhapsody",
 );
 check(
-  "escaped quotes round-tripped",
-  titles.has('Title with "quotes"'),
+  "Container Artist Name → artistName",
+  queen?.artistName === "Queen",
 );
 check(
-  "artist after 'by' extracted",
-  pa.plays.some(
-    (p) =>
-      p.trackName === "Bohemian Rhapsody" && p.artistName === "Queen",
-  ),
+  "Album Name → albumName",
+  queen?.albumName === "A Night at the Opera",
 );
 check(
-  "msPlayed set from End Position",
-  pa.plays[0].msPlayed === 354000,
-  `got ${pa.plays[0].msPlayed}`,
+  "msPlayed from Play Duration Milliseconds",
+  queen?.msPlayed === 354000,
+  `got ${queen?.msPlayed}`,
 );
 check(
-  "completed flag → reasonEnd=trackdone",
-  pa.plays[0].reasonEnd === "trackdone",
+  "NATURAL_END_OF_TRACK → reasonEnd=trackdone",
+  queen?.reasonEnd === "trackdone",
 );
+const skipped = pa.plays.find((p) => p.trackName === "Stronger");
 check(
-  "skip flag → reasonEnd undefined",
-  pa.plays.find(
-    (p) =>
-      p.trackName === "Stronger" && p.artistName === "Kanye West",
-  )?.reasonEnd === undefined,
+  "TRACK_SKIPPED_FORWARDS → reasonEnd undefined",
+  skipped?.reasonEnd === undefined,
+);
+const comma = pa.plays.find((p) => p.trackName === "Title, with comma");
+check("title with embedded comma parsed", !!comma);
+const quotes = pa.plays.find((p) => p.trackName === 'Title with "quotes"');
+check("escaped quotes round-tripped", !!quotes);
+const orphan = pa.plays.find((p) => p.trackName === "Orphaned Track");
+check(
+  "row with empty Container Artist Name → artistName='Unknown'",
+  orphan?.artistName === "Unknown",
+  `got ${orphan?.artistName}`,
 );
 
-// --- Recently Played ---
+// --- Recently Played (real schema, with Apple's Tyoe typo) ---
 console.log("\n=== Apple Music - Recently Played Tracks.csv ===");
 const rp = parseAppleMusicCsv(
   "Apple Music - Recently Played Tracks.csv",
@@ -99,9 +93,33 @@ const rp = parseAppleMusicCsv(
 );
 console.log(`kind: ${rp.kind}, plays: ${rp.plays.length}`);
 check("kind detected as recently-played", rp.kind === "recently-played");
-check("recently-played count", rp.plays.length === 2);
+// Total plays across the 3 rows: 2 + 1 + 3 = 6 synthesized plays
+check(
+  "Total plays expanded into per-play rows",
+  rp.plays.length === 6,
+  `got ${rp.plays.length}`,
+);
+const stink = rp.plays.find((p) => p.trackName === "The Stink God");
+check(
+  "Track Description split on ' - ' (artist FIRST)",
+  stink?.artistName === "Joe Hisaishi" && stink?.trackName === "The Stink God",
+);
+check(
+  "Container Description album extracted",
+  stink?.albumName === "Spirited Away (Original Soundtrack)",
+);
+check(
+  "Apple's 'Last End Reason Tyoe' typo handled",
+  // Stink had PLAYBACK_MANUALLY_PAUSED → not completed
+  stink?.reasonEnd === undefined,
+);
+const hisHardWork = rp.plays.find((p) => p.trackName === "It's Hard Work");
+check(
+  "NATURAL_END_OF_TRACK on Recently Played → reasonEnd=trackdone",
+  hisHardWork?.reasonEnd === "trackdone",
+);
 
-// --- Daily Tracks ---
+// --- Daily Tracks (real schema with comma-separated Hours) ---
 console.log("\n=== Apple Music Play History Daily Tracks.csv ===");
 const dt = parseAppleMusicCsv(
   "Apple Music Play History Daily Tracks.csv",
@@ -109,15 +127,31 @@ const dt = parseAppleMusicCsv(
 );
 console.log(`kind: ${dt.kind}, plays: ${dt.plays.length}`);
 check("kind detected as daily-tracks", dt.kind === "daily-tracks");
-// Daily synthesizes plays-count rows per row: 2 + 2 + 1 = 5
-check("daily-tracks expanded to per-play rows", dt.plays.length === 5);
+// Play Count totals: 7 + 4 + 1 = 12
+check(
+  "Play Count expanded to per-play rows",
+  dt.plays.length === 12,
+  `got ${dt.plays.length}`,
+);
+const eno = dt.plays.find((p) => p.trackName === "1/2");
+check(
+  "daily Track Description split on ' - '",
+  eno?.artistName === "Brian Eno" && eno?.trackName === "1/2",
+);
+const enoHour = new Date(eno?.ts ?? 0).getUTCHours();
+check(
+  "first Hour value (18 from '18, 19') used as base hour",
+  enoHour === 18,
+  `got UTC hour ${enoHour}`,
+);
+const cig = dt.plays.find((p) => p.trackName === "Cigarette Daydreams");
+check(
+  "single-int Hours value parsed",
+  new Date(cig?.ts ?? 0).getUTCHours() === 12,
+);
 
-// --- Inline aggregation ---------------------------------------------
-// parseFiles() in lib/parser.ts wires the CSV plays through a generic
-// aggregation step. Reproduce just enough of that logic here to verify
-// the per-track / per-artist roll-up works on Apple Music input,
-// without crossing the Node-vs-TypeScript-import boundary.
-console.log("\n=== Aggregation roll-up ===");
+// --- Aggregation roll-up ---
+console.log("\n=== Aggregation roll-up (Play Activity) ===");
 const MIN_MS = 30_000;
 const realPlays = pa.plays.filter((p) => p.msPlayed >= MIN_MS);
 const tracksByKey = new Map();
@@ -127,60 +161,29 @@ for (const p of realPlays) {
   const t = tracksByKey.get(tk);
   if (t) {
     t.playCount++;
-    t.totalMsPlayed += p.msPlayed;
   } else {
-    tracksByKey.set(tk, {
-      name: p.trackName,
-      artist: p.artistName,
-      playCount: 1,
-      totalMsPlayed: p.msPlayed,
-    });
+    tracksByKey.set(tk, { name: p.trackName, artist: p.artistName, playCount: 1 });
   }
   const ak = p.artistName.toLowerCase();
-  const a = artistsByKey.get(ak);
-  if (a) {
-    a.playCount++;
-    a.totalMsPlayed += p.msPlayed;
-  } else {
-    artistsByKey.set(ak, {
-      name: p.artistName,
-      playCount: 1,
-      totalMsPlayed: p.msPlayed,
-    });
-  }
+  artistsByKey.set(ak, (artistsByKey.get(ak) ?? 0) + 1);
 }
 console.log(
-  `realPlays=${realPlays.length}, tracks=${tracksByKey.size}, ` +
-    `artists=${artistsByKey.size}`,
+  `realPlays=${realPlays.length}, tracks=${tracksByKey.size}, artists=${artistsByKey.size}`,
 );
+// 6 plays survive (all PLAY_END rows have msPlayed >= 45000 except the
+// PAUSE row which was already dropped); 6 unique tracks; 6 unique
+// artists + 1 "Unknown".
+check("6 plays survive 30s filter", realPlays.length === 6);
+check("6 unique tracks", tracksByKey.size === 6);
+// Harry Styles was only on the PAUSE row, which is dropped, so the
+// surviving artists are: Queen, Cage The Elephant, Kanye West, Some
+// Artist, Another Artist, Unknown — 6.
 check(
-  "all 8 PLAY_END rows survive the 30s filter",
-  realPlays.length === 8,
-  `got ${realPlays.length}`,
-);
-// 7 unique tracks: Bohemian Rhapsody, Cigarette Daydreams (×2 plays),
-// Stronger, Watermelon Sugar (×1 — second was PAUSE & dropped earlier),
-// Sweet Caroline, Title-with-comma, Title-with-quotes
-check(
-  "tracks de-duplicated by name+artist",
-  tracksByKey.size === 7,
-  `got ${tracksByKey.size}`,
-);
-const cigarette = Array.from(tracksByKey.values()).find(
-  (t) => t.name === "Cigarette Daydreams",
-);
-check(
-  "Cigarette Daydreams has 2 plays",
-  cigarette?.playCount === 2,
-  `got ${cigarette?.playCount}`,
-);
-check(
-  "artists de-duplicated",
-  artistsByKey.size === 7, // Queen, Cage The Elephant, Kanye West, Harry Styles, Neil Diamond, Some Artist, Another Artist
-  `got ${artistsByKey.size}`,
+  "6 unique artists incl. Unknown",
+  artistsByKey.size === 6,
+  Array.from(artistsByKey.keys()).join(" | "),
 );
 
 console.log(
-  "\n" +
-    (process.exitCode ? "Some checks failed" : "All checks passed"),
+  "\n" + (process.exitCode ? "Some checks failed" : "All checks passed"),
 );
