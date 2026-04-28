@@ -1,5 +1,9 @@
 "use client";
 
+// d3-force-3d ships no @types, and we only need forceCollide here;
+// keep the import surface narrow with a local module shim.
+// @ts-expect-error — module has no published declaration file
+import { forceCollide } from "d3-force-3d";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -912,29 +916,18 @@ export default function Starfield({
         chargeForce.distanceMax(500);
       }
       // Collision force — d3-force-3d doesn't know about node radii,
-      // so without this large nodes happily occupy the same space
-      // (very visible after the size-range widening; tracks from a
-      // single dense genre cluster were rendering as overlapping
-      // blobs). Radius math mirrors the renderer:
-      // forceGraph radius = nodeRelSize × cbrt(nodeVal) where
-      // nodeVal=node.size and nodeRelSize=10. Add a small buffer
-      // so spheres don't kiss, just nearly-touch.
-      try {
-        // Dynamic-import keeps the d3-force-3d module out of any
-        // SSR / first-paint path; it's only needed once forces wake.
-        // The graph object is also dynamically loaded so this is
-        // already in a client-only code path.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { forceCollide } = require("d3-force-3d");
-        const collide = forceCollide()
-          .radius((d: GraphNode) => 10 * Math.cbrt(d.size) + 4)
-          .strength(0.9)
-          .iterations(2);
-        fg.d3Force?.("collide", collide);
-      } catch {
-        // d3-force-3d not present; the layout still works without
-        // collision (just with potential overlap on large nodes).
-      }
+      // so without this nodes happily occupy the same space (very
+      // visible after the size-range widening; tracks from a single
+      // dense genre cluster were rendering as overlapping blobs).
+      // Radius math mirrors the renderer: ForceGraph3D's rendered
+      // radius = nodeRelSize × cbrt(nodeVal) where nodeVal=node.size
+      // and nodeRelSize=10. Add an 8px buffer so spheres can be
+      // visibly close but never visually merge.
+      const collide = forceCollide()
+        .radius((d: GraphNode) => 10 * Math.cbrt(d.size) + 8)
+        .strength(1.0)
+        .iterations(3);
+      fg.d3Force?.("collide", collide);
       // Stronger centering so the constellation occupies a smaller
       // volume — keeps it readable without zooming.
       const centerForce = fg.d3Force?.("center");

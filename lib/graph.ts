@@ -61,8 +61,13 @@ const MAX_LINKS_PER_NODE = 6;
 // scales LINEARLY with the metric (so a top track is N× the radius
 // of a min-rank track) and then cube it before storing as `size`,
 // pre-compensating for the cbrt the renderer applies on the way out.
+//
+// Radius range tuned for ~150-node libraries — top spheres ~36px,
+// long-tail ~10px. forceCollide in Starfield.tsx prevents overlap
+// at this scale. Going wider (we tried 6× = 60px) made the cluster
+// volume so large that zooming in showed nothing but spheres.
 const SIZE_RADIUS_MIN = 1; // ~radius nodeRelSize × 1 = 10 px
-const SIZE_RADIUS_MAX = 6; // ~radius nodeRelSize × 6 = 60 px (6× ratio)
+const SIZE_RADIUS_MAX = 3.6; // ~radius nodeRelSize × 3.6 = 36 px (3.6× ratio)
 function radiusFactor(fraction: number): number {
   return SIZE_RADIUS_MIN + fraction * (SIZE_RADIUS_MAX - SIZE_RADIUS_MIN);
 }
