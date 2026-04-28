@@ -46,8 +46,13 @@ export type GraphLink = {
 };
 
 // Edge selection knobs — tune these to make the graph more or less dense.
-const MIN_JACCARD = 0.18;
-const MAX_LINKS_PER_NODE = 14;
+// Earlier 14/0.18 made hairballs for genre-concentrated libraries
+// (lots of rap tracks all inheriting the same 4-5 Last.fm tags via
+// their artists, every pair → jaccard ≈ 0.8+). 6/0.28 keeps each
+// node connected to its few strongest neighbors only, leaving the
+// graph navigable without collapsing into a blob.
+const MIN_JACCARD = 0.28;
+const MAX_LINKS_PER_NODE = 6;
 
 // Node-size scaling. ForceGraph3D's render radius is
 // nodeRelSize × cbrt(nodeVal), so any sub-linear scaling on `nodeVal`

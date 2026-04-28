@@ -889,23 +889,49 @@ export default function Starfield({
     if (!linkForce || !chargeForce) return;
 
     const n = graph.nodes.length;
-    // Compact tuning — pull connected nodes tighter and dampen long-range
-    // repulsion so clusters stay packed. Values are roughly half the
-    // previous spread; ~sqrt(n) growth keeps larger libraries from
-    // collapsing into a single ball.
-    const linkDistance = Math.round(140 + Math.sqrt(n) * 18);
-    const chargeStrength = -(380 + n * 5);
+    // Looser tuning — push connected nodes apart so individual
+    // members of a cluster are clearly distinguishable, and let
+    // long-range repulsion spread distant clusters out across the
+    // canvas. Previous values produced visible blob-merging on
+    // dense-genre libraries.
+    const linkDistance = Math.round(200 + Math.sqrt(n) * 28);
+    const chargeStrength = -(700 + n * 9);
     try {
       linkForce.distance(linkDistance);
       if (typeof linkForce.strength === "function") {
-        // Stronger spring → connected nodes pull in tighter.
-        linkForce.strength(0.32);
+        // Weaker spring → links don't yank cluster members on top of
+        // each other. Pairs with the higher chargeStrength below.
+        linkForce.strength(0.18);
       }
       chargeForce.strength(chargeStrength);
-      // Cap repulsion reach so distant clusters don't push each other
-      // apart across the canvas.
+      // Wider repulsion reach so distant clusters spread across the
+      // canvas instead of bunching toward the center.
       if (typeof chargeForce.distanceMax === "function") {
-        chargeForce.distanceMax(550);
+        chargeForce.distanceMax(900);
+      }
+      // Collision force — d3-force-3d doesn't know about node radii,
+      // so without this large nodes happily occupy the same space
+      // (very visible after the size-range widening; tracks from a
+      // single dense genre cluster were rendering as overlapping
+      // blobs). Radius math mirrors the renderer:
+      // forceGraph radius = nodeRelSize × cbrt(nodeVal) where
+      // nodeVal=node.size and nodeRelSize=10. Add a small buffer
+      // so spheres don't kiss, just nearly-touch.
+      try {
+        // Dynamic-import keeps the d3-force-3d module out of any
+        // SSR / first-paint path; it's only needed once forces wake.
+        // The graph object is also dynamically loaded so this is
+        // already in a client-only code path.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { forceCollide } = require("d3-force-3d");
+        const collide = forceCollide()
+          .radius((d: GraphNode) => 10 * Math.cbrt(d.size) + 4)
+          .strength(0.9)
+          .iterations(2);
+        fg.d3Force?.("collide", collide);
+      } catch {
+        // d3-force-3d not present; the layout still works without
+        // collision (just with potential overlap on large nodes).
       }
       // Stronger centering so the constellation occupies a smaller
       // volume — keeps it readable without zooming.
