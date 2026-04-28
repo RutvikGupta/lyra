@@ -395,15 +395,18 @@ const FiltersPanel = forwardRef<
 
       {/* Engagement */}
       <FilterRow label="Engagement">
-        <Pill
-          active={criteria.lovedOnly}
-          onClick={() =>
-            onChange({ ...criteria, lovedOnly: !criteria.lovedOnly })
-          }
+        <span
           title="Heuristic — Spotify's data export has no liked/saved flag. Counts a track as 'loved' if you played it 5+ times, mostly to completion (avg ≥ 70% of longest play), and rarely skipped (< 15%)."
         >
-          ♥ Repeats
-        </Pill>
+          <Pill
+            active={criteria.lovedOnly}
+            onClick={() =>
+              onChange({ ...criteria, lovedOnly: !criteria.lovedOnly })
+            }
+          >
+            ♥ Repeats
+          </Pill>
+        </span>
         <Divider />
         <Pill
           active={criteria.skipBucket === "any"}
