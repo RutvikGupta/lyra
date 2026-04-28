@@ -188,10 +188,12 @@ export default async function Home({
           </section>
         )}
 
-        {/* Upload CTA — step-by-step because the Spotify ZIP request flow
-            is a 30-day async loop people forget about, and "where's the
-            ZIP?" is the most common question on first encounter. */}
-        <section className="rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[var(--surface-elevated)] to-[var(--surface)] p-6">
+        {/* Upload CTA — step-by-step because the data-export request flows
+            (Spotify and Apple Music both) are async week+-long loops people
+            forget about, and "where's my ZIP?" is the most common question
+            on first encounter. Side-by-side cards so visitors can pick
+            whichever service they actually use. */}
+        <section className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-[var(--brand)]">
               Your turn · deep path
@@ -200,44 +202,106 @@ export default async function Home({
               Bring your full history
             </h3>
             <p className="text-sm text-[var(--muted)]">
-              Spotify lets you request your full play history as a ZIP.
-              Parsing happens entirely in your browser — your data never
-              leaves this tab.
+              Spotify and Apple Music both let you request your full play
+              history as a download. Parsing happens entirely in your
+              browser — your data never leaves this tab, and no sign-in
+              is needed for the upload.
             </p>
           </div>
 
-          <ol className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
-            <Step n={1} title="Request the ZIP">
-              Open{" "}
-              <a
-                href="https://www.spotify.com/account/privacy/"
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-[var(--brand)] underline-offset-4 hover:underline"
-              >
-                spotify.com/account/privacy
-              </a>{" "}
-              and tick <span className="font-medium text-white">Extended
-              streaming history</span>, then click{" "}
-              <span className="font-medium text-white">Request data</span>.
-            </Step>
-            <Step n={2} title="Confirm + wait">
-              Spotify emails a confirmation link — click it. The ZIP arrives
-              by email <span className="font-medium text-white">within
-              ~30 days</span> (usually a few days).
-            </Step>
-            <Step n={3} title="Drop it here">
-              Unzip not required. Drag the ZIP onto the upload page — Lyra
-              parses it locally and renders your constellation.
-            </Step>
-          </ol>
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Spotify card */}
+            <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[var(--surface-elevated)] to-[var(--surface)] p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="inline-flex h-6 items-center rounded-full bg-[var(--brand)]/15 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--brand)]">
+                  Spotify
+                </span>
+              </div>
+              <ol className="grid gap-3 text-sm">
+                <Step n={1} title="Request the ZIP">
+                  Open{" "}
+                  <a
+                    href="https://www.spotify.com/account/privacy/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-[var(--brand)] underline-offset-4 hover:underline"
+                  >
+                    spotify.com/account/privacy
+                  </a>{" "}
+                  and tick{" "}
+                  <span className="font-medium text-white">
+                    Extended streaming history
+                  </span>
+                  , then click{" "}
+                  <span className="font-medium text-white">Request data</span>.
+                </Step>
+                <Step n={2} title="Confirm + wait">
+                  Spotify emails a confirmation link — click it. The ZIP
+                  arrives by email{" "}
+                  <span className="font-medium text-white">
+                    within ~30 days
+                  </span>{" "}
+                  (usually a few days).
+                </Step>
+                <Step n={3} title="Drop it here">
+                  Unzip not required. Drag the ZIP onto the upload page —
+                  Lyra parses it locally and renders your constellation.
+                </Step>
+              </ol>
+            </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {/* Apple Music card */}
+            <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[var(--surface-elevated)] to-[var(--surface)] p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="inline-flex h-6 items-center rounded-full bg-pink-500/15 px-2 text-[10px] font-bold uppercase tracking-wider text-pink-300">
+                  Apple Music
+                </span>
+              </div>
+              <ol className="grid gap-3 text-sm">
+                <Step n={1} title="Request the ZIP">
+                  Open{" "}
+                  <a
+                    href="https://privacy.apple.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-pink-300 underline-offset-4 hover:underline"
+                  >
+                    privacy.apple.com
+                  </a>{" "}
+                  →{" "}
+                  <span className="font-medium text-white">
+                    Request a copy of your data
+                  </span>{" "}
+                  →{" "}
+                  <span className="font-medium text-white">
+                    Apple Media Services
+                  </span>
+                  .
+                </Step>
+                <Step n={2} title="Confirm + wait">
+                  Apple emails when ready —{" "}
+                  <span className="font-medium text-white">
+                    usually within ~7 days
+                  </span>
+                  . The download is a ZIP.
+                </Step>
+                <Step n={3} title="Drop it here">
+                  Drop the ZIP, or pull{" "}
+                  <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
+                    Apple Music Play Activity.csv
+                  </code>{" "}
+                  out of it. Lyra parses it locally.
+                </Step>
+              </ol>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
             <Link
               href="/upload"
               className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black transition-transform hover:scale-[1.03] active:scale-[0.99]"
             >
-              Upload ZIP →
+              Upload data →
             </Link>
             <a
               href="https://www.spotify.com/account/privacy/"
@@ -245,7 +309,15 @@ export default async function Home({
               rel="noreferrer"
               className="text-xs font-semibold text-[var(--muted)] transition-colors hover:text-white"
             >
-              Open Spotify privacy page ↗
+              Spotify privacy ↗
+            </a>
+            <a
+              href="https://privacy.apple.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-semibold text-[var(--muted)] transition-colors hover:text-white"
+            >
+              Apple privacy ↗
             </a>
           </div>
         </section>
