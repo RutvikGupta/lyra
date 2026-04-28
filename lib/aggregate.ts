@@ -32,8 +32,46 @@ function timeOfDayBucket(hour: number): TimeOfDay {
   return "night";
 }
 
+// Spotify's "reason_start" values that imply the user actively chose
+// this track (rather than it auto-playing from queue/radio/etc):
+//   - clickrow: tapped a row in a list
+//   - playbtn:  hit play
+// fwdbtn / backbtn are intentionally excluded — they're more often
+// "skipping past something" than "picking this".
+const ACTIVE_START_REASONS = new Set(["clickrow", "playbtn"]);
+
 function isActiveStart(reasonStart?: string): boolean {
-  return reasonStart === "clickrow" || reasonStart === "playbtn";
+  return !!reasonStart && ACTIVE_START_REASONS.has(reasonStart);
+}
+
+// Some datasets don't carry the play-level metadata that the
+// sessionEntry / skipBucket filters depend on. Specifically:
+//   - Spotify "Account Data (12 months)" omits reason_start AND skipped.
+//   - Apple Music exports omit both entirely.
+//   - Spotify "Extended Streaming History" includes both.
+//
+// Detect feature availability once over the input array so we can
+// skip filters that would otherwise quietly empty the graph (or pass
+// everything through for the wrong reason). Threshold of >5% present
+// to count it as "available" — handles mixed-source uploads where one
+// source carries the field and the other doesn't.
+function datasetCapabilities(plays: Play[]): {
+  hasReasonStart: boolean;
+  hasSkipFlag: boolean;
+} {
+  if (plays.length === 0) return { hasReasonStart: false, hasSkipFlag: false };
+  const sample = plays.length > 1000 ? plays.slice(0, 1000) : plays;
+  let reasonCount = 0;
+  let skipCount = 0;
+  for (const p of sample) {
+    if (p.reasonStart) reasonCount++;
+    if (p.skipped !== undefined) skipCount++;
+  }
+  const threshold = sample.length * 0.05;
+  return {
+    hasReasonStart: reasonCount > threshold,
+    hasSkipFlag: skipCount > threshold,
+  };
 }
 
 function applyPlayFilters(plays: Play[], f: PlayFilters | undefined): Play[] {
@@ -42,6 +80,16 @@ function applyPlayFilters(plays: Play[], f: PlayFilters | undefined): Play[] {
     f.timeOfDay && f.timeOfDay.length > 0 && f.timeOfDay.length < 4
       ? new Set(f.timeOfDay)
       : null;
+  // Cheap pre-pass so the per-play loop doesn't re-check capabilities.
+  const sessionEntryActive = !!f.sessionEntry && f.sessionEntry !== "all";
+  const caps = sessionEntryActive
+    ? datasetCapabilities(plays)
+    : { hasReasonStart: true, hasSkipFlag: true };
+  // If the dataset has no reason_start data, the sessionEntry filter
+  // has no signal — degrade to a no-op so the user sees their library
+  // instead of an empty graph. UI tooltip in CriteriaBar.tsx warns
+  // when this happens.
+  const skipSessionFilter = sessionEntryActive && !caps.hasReasonStart;
   return plays.filter((p) => {
     const d = new Date(p.ts);
     if (todSet) {
@@ -53,7 +101,7 @@ function applyPlayFilters(plays: Play[], f: PlayFilters | undefined): Play[] {
       if (f.dayOfWeek === "weekend" && !weekend) return false;
       if (f.dayOfWeek === "weekday" && weekend) return false;
     }
-    if (f.sessionEntry && f.sessionEntry !== "all") {
+    if (sessionEntryActive && !skipSessionFilter) {
       const active = isActiveStart(p.reasonStart);
       if (f.sessionEntry === "active" && !active) return false;
       if (f.sessionEntry === "auto" && active) return false;
@@ -201,32 +249,43 @@ export function aggregateTopTracksFromPlays(
 
   let result = Array.from(map.values());
 
+  // skipCount only carries signal when at least one play in the
+  // dataset reported `skipped`. Apple Music exports + Spotify Account
+  // Data (12mo) don't have it; in those cases skipCount is 0 for
+  // every track, which would make "skipRate < 0.15" pass trivially
+  // and "low / ≤5% skips" pass everything. Detect the dataset's
+  // capability once and drop skip-related filtering when missing.
+  const skipDataPresent = result.some((t) => t.skipCount > 0);
+
   if (options.lovedOnly) {
     result = result.filter((t) => {
       // Spotify's data export has NO "saved" or "liked" flag, so
-      // "Loved" is necessarily a heuristic from play behavior. The
-      // earlier version (avg ratio ≥ 0.5 AND skipRate < 0.3) flagged
-      // any song played once to completion as loved — including
-      // background-radio one-offs and friends' playlist passes.
-      //
-      // The tighter rule:
+      // "Loved" is necessarily a heuristic from play behavior. Tight
+      // rule that resists single-play-completion false positives:
       //   1. Played at least 5 times (you came back to it).
-      //   2. avg play length ≥ 70% of the longest play (you mostly
-      //      let it finish).
-      //   3. Skip rate < 15% (you rarely skip it).
+      //   2. avg play length ≥ 70% of the longest play.
+      //   3. Skip rate < 15% — only enforced if the dataset carries
+      //      skip data; for Apple Music etc. we drop this clause so
+      //      the heuristic still works on what's there.
       const avg = t.msPlayed / t.playCount;
       const ratio = t.maxMsPlayed > 0 ? avg / t.maxMsPlayed : 0;
-      const skipRate = t.skipCount / t.playCount;
-      return (
-        t.playCount >= 5 &&
-        ratio >= 0.7 &&
-        skipRate < 0.15
-      );
+      if (t.playCount < 5) return false;
+      if (ratio < 0.7) return false;
+      if (skipDataPresent) {
+        const skipRate = t.skipCount / t.playCount;
+        if (skipRate >= 0.15) return false;
+      }
+      return true;
     });
   }
   if (options.skipBucket && options.skipBucket !== "any") {
-    const max = options.skipBucket === "low" ? 0.2 : 0.05;
-    result = result.filter((t) => t.skipCount / t.playCount <= max);
+    if (!skipDataPresent) {
+      // No-op rather than passing everything through and looking
+      // like the user's listening history is somehow skip-free.
+    } else {
+      const max = options.skipBucket === "low" ? 0.2 : 0.05;
+      result = result.filter((t) => t.skipCount / t.playCount <= max);
+    }
   }
   if (options.discoveryYear !== undefined && options.discoveryYear !== "all") {
     const target = options.discoveryYear;

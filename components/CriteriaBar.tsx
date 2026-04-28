@@ -414,18 +414,22 @@ const FiltersPanel = forwardRef<
         >
           any skips
         </Pill>
-        <Pill
-          active={criteria.skipBucket === "low"}
-          onClick={() => onChange({ ...criteria, skipBucket: "low" })}
-        >
-          low ≤20%
-        </Pill>
-        <Pill
-          active={criteria.skipBucket === "none"}
-          onClick={() => onChange({ ...criteria, skipBucket: "none" })}
-        >
-          ≤5% skips
-        </Pill>
+        <span title="Needs Spotify Extended Streaming History (the long-form ZIP). Apple Music exports and Spotify's 12-month account data don't carry per-play skip flags, so this filter is a no-op there.">
+          <Pill
+            active={criteria.skipBucket === "low"}
+            onClick={() => onChange({ ...criteria, skipBucket: "low" })}
+          >
+            low ≤20%
+          </Pill>
+        </span>
+        <span title="Needs Spotify Extended Streaming History. Apple Music / Spotify 12-month exports lack the skipped flag, so this filter is a no-op there.">
+          <Pill
+            active={criteria.skipBucket === "none"}
+            onClick={() => onChange({ ...criteria, skipBucket: "none" })}
+          >
+            ≤5% skips
+          </Pill>
+        </span>
         <Divider />
         <Pill
           active={criteria.sessionEntry === "all"}
@@ -433,18 +437,22 @@ const FiltersPanel = forwardRef<
         >
           any start
         </Pill>
-        <Pill
-          active={criteria.sessionEntry === "active"}
-          onClick={() => onChange({ ...criteria, sessionEntry: "active" })}
-        >
-          you picked
-        </Pill>
-        <Pill
-          active={criteria.sessionEntry === "auto"}
-          onClick={() => onChange({ ...criteria, sessionEntry: "auto" })}
-        >
-          auto-played
-        </Pill>
+        <span title="Needs Spotify Extended Streaming History (reason_start field). Apple Music and Spotify 12-month exports don't carry it — the filter is a no-op there.">
+          <Pill
+            active={criteria.sessionEntry === "active"}
+            onClick={() => onChange({ ...criteria, sessionEntry: "active" })}
+          >
+            you picked
+          </Pill>
+        </span>
+        <span title="Needs Spotify Extended Streaming History. Apple Music / Spotify 12-month exports don't carry reason_start, so this filter is a no-op there.">
+          <Pill
+            active={criteria.sessionEntry === "auto"}
+            onClick={() => onChange({ ...criteria, sessionEntry: "auto" })}
+          >
+            auto-played
+          </Pill>
+        </span>
       </FilterRow>
 
       {/* Discovery year */}
