@@ -893,21 +893,20 @@ export default function Starfield({
     if (!linkForce || !chargeForce) return;
 
     const n = graph.nodes.length;
-    // Genre-cluster tuning: short links + strong link spring pull
-    // same-genre neighbors into a tight bunch, while moderate charge
-    // pushes unconnected nodes apart enough to reveal cluster gaps.
-    // forceCollide (set below) handles per-node radius so we can pull
-    // links short without spheres overlapping. Without forceCollide
-    // these distances would produce the blob from earlier.
-    const linkDistance = Math.round(80 + Math.sqrt(n) * 8);
+    // Tighter still: shorter links + a stronger forceCollide buffer
+    // below. Same-genre nodes pack close to each other, but the
+    // collision radius (rendered radius + 12px) guarantees they
+    // never visually merge.
+    const linkDistance = Math.round(40 + Math.sqrt(n) * 4);
     const chargeStrength = -(220 + n * 4);
     try {
       linkForce.distance(linkDistance);
       if (typeof linkForce.strength === "function") {
-        // Strong spring → genre-connected nodes pulled tight into
-        // visually-coherent clusters. forceCollide below stops them
-        // from intersecting at this strength.
-        linkForce.strength(0.7);
+        // Moderate spring — pulls genre-neighbors close, but weak
+        // enough that forceCollide wins at the contact boundary.
+        // Higher values produce visible sphere-merging at the new
+        // short link distance.
+        linkForce.strength(0.55);
       }
       chargeForce.strength(chargeStrength);
       // Cap repulsion reach — keep distant clusters apart but don't
@@ -915,18 +914,18 @@ export default function Starfield({
       if (typeof chargeForce.distanceMax === "function") {
         chargeForce.distanceMax(500);
       }
-      // Collision force — d3-force-3d doesn't know about node radii,
-      // so without this nodes happily occupy the same space (very
-      // visible after the size-range widening; tracks from a single
-      // dense genre cluster were rendering as overlapping blobs).
-      // Radius math mirrors the renderer: ForceGraph3D's rendered
-      // radius = nodeRelSize × cbrt(nodeVal) where nodeVal=node.size
-      // and nodeRelSize=10. Add an 8px buffer so spheres can be
-      // visibly close but never visually merge.
+      // Collision force — guaranteed visual gap between spheres.
+      // Radius math mirrors the renderer:
+      //   rendered radius = nodeRelSize × cbrt(nodeVal)
+      //                   = 10 × cbrt(node.size)
+      // + a 12px buffer so the gap is clearly visible at the new
+      // shorter link distance. strength 1.0 + 4 iterations means
+      // collision essentially never lets nodes intersect, even when
+      // the spring force is yanking them in.
       const collide = forceCollide()
-        .radius((d: GraphNode) => 10 * Math.cbrt(d.size) + 8)
+        .radius((d: GraphNode) => 10 * Math.cbrt(d.size) + 12)
         .strength(1.0)
-        .iterations(3);
+        .iterations(4);
       fg.d3Force?.("collide", collide);
       // Stronger centering so the constellation occupies a smaller
       // volume — keeps it readable without zooming.
