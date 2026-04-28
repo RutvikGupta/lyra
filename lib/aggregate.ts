@@ -203,12 +203,25 @@ export function aggregateTopTracksFromPlays(
 
   if (options.lovedOnly) {
     result = result.filter((t) => {
-      // "Loved": avg play length is at least half the longest play (proxy
-      // for duration), AND skip rate < 30%.
+      // Spotify's data export has NO "saved" or "liked" flag, so
+      // "Loved" is necessarily a heuristic from play behavior. The
+      // earlier version (avg ratio ≥ 0.5 AND skipRate < 0.3) flagged
+      // any song played once to completion as loved — including
+      // background-radio one-offs and friends' playlist passes.
+      //
+      // The tighter rule:
+      //   1. Played at least 5 times (you came back to it).
+      //   2. avg play length ≥ 70% of the longest play (you mostly
+      //      let it finish).
+      //   3. Skip rate < 15% (you rarely skip it).
       const avg = t.msPlayed / t.playCount;
       const ratio = t.maxMsPlayed > 0 ? avg / t.maxMsPlayed : 0;
       const skipRate = t.skipCount / t.playCount;
-      return ratio >= 0.5 && skipRate < 0.3;
+      return (
+        t.playCount >= 5 &&
+        ratio >= 0.7 &&
+        skipRate < 0.15
+      );
     });
   }
   if (options.skipBucket && options.skipBucket !== "any") {

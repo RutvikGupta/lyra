@@ -400,8 +400,9 @@ const FiltersPanel = forwardRef<
           onClick={() =>
             onChange({ ...criteria, lovedOnly: !criteria.lovedOnly })
           }
+          title="Heuristic — Spotify's data export has no liked/saved flag. Counts a track as 'loved' if you played it 5+ times, mostly to completion (avg ≥ 70% of longest play), and rarely skipped (< 15%)."
         >
-          ♥ Loved only
+          ♥ Repeats
         </Pill>
         <Divider />
         <Pill
