@@ -46,8 +46,30 @@ export type GraphLink = {
 };
 
 // Edge selection knobs — tune these to make the graph more or less dense.
-const MIN_JACCARD = 0.22;
-const MAX_LINKS_PER_NODE = 8;
+const MIN_JACCARD = 0.18;
+const MAX_LINKS_PER_NODE = 14;
+
+// Node-size scaling. ForceGraph3D's render radius is
+// nodeRelSize × cbrt(nodeVal), so any sub-linear scaling on `nodeVal`
+// gets compounded with cbrt and produces a graph where everything
+// looks the same size. We compute a per-node "radius factor" that
+// scales LINEARLY with the metric (so a top track is N× the radius
+// of a min-rank track) and then cube it before storing as `size`,
+// pre-compensating for the cbrt the renderer applies on the way out.
+const SIZE_RADIUS_MIN = 1; // ~radius nodeRelSize × 1 = 10 px
+const SIZE_RADIUS_MAX = 6; // ~radius nodeRelSize × 6 = 60 px (6× ratio)
+function radiusFactor(fraction: number): number {
+  return SIZE_RADIUS_MIN + fraction * (SIZE_RADIUS_MAX - SIZE_RADIUS_MIN);
+}
+function sizeFromMetric(metric: number, maxMetric: number): number {
+  if (maxMetric <= 0) return SIZE_RADIUS_MIN ** 3;
+  // sqrt is just enough nonlinearity that the long tail isn't all
+  // floor-clamped; the cube on top (combined with the renderer's
+  // cbrt) restores a near-linear visual mapping for the upper half.
+  const fraction = Math.sqrt(Math.max(0, metric) / maxMetric);
+  const k = radiusFactor(fraction);
+  return k ** 3;
+}
 
 // Anchors orphan nodes (no edges passing the Jaccard threshold) to their
 // single best-overlap neighbor regardless of similarity strength. Prevents
@@ -173,16 +195,7 @@ export function buildTrackGraph(
     const genres =
       artistGenresByLowerName.get(t.artistName.toLowerCase()) ?? [];
     const primaryGenre = genres[0] ?? "unknown";
-    // ForceGraph3D renders radius = nodeRelSize × cbrt(nodeVal), so a
-    // 4× value range (8→32) only becomes a 1.6× visual radius range.
-    // Widen aggressively (range 4→144) so cbrt yields ~3.3× visual
-    // ratio between the smallest and largest nodes — top tracks
-    // visibly tower over the long tail. sqrt keeps the long tail
-    // distinguishable rather than all collapsing onto the floor.
-    const size =
-      maxMetric > 0
-        ? 4 + Math.sqrt(metric(t) / maxMetric) * 140
-        : 4;
+    const size = sizeFromMetric(metric(t), maxMetric);
     return {
       id:
         t.uri ??
@@ -264,15 +277,15 @@ export function buildArtistGraph(
   const maxMetric = safe.reduce((m, a) => Math.max(m, metric(a)), 0);
   const nodes: GraphNode[] = safe.map((a) => {
     const primaryGenre = a.genres[0] ?? "unknown";
-    // See buildTrackGraph for why the range is so wide — cbrt in the
-    // renderer flattens nodeVal aggressively, so a small nominal range
-    // produces near-uniform visual radii.
+    // See sizeFromMetric — radius scales linearly with the metric so
+    // top artists visibly tower over the long tail.
     let size: number;
     if (maxMetric > 0 && metric(a) > 0) {
-      size = 4 + Math.sqrt(metric(a) / maxMetric) * 140;
+      size = sizeFromMetric(metric(a), maxMetric);
     } else {
       const cappedRank = Math.min(Math.max(a.rank, 1), 50);
-      size = 4 + ((50 - cappedRank) / 49) * 140;
+      const fraction = (50 - cappedRank) / 49;
+      size = radiusFactor(fraction) ** 3;
     }
     return {
       id: a.id,
