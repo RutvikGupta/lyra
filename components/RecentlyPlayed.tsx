@@ -22,6 +22,10 @@ type Item = {
 // listening session — new tracks show up within ~1 min of finishing.
 const CACHE_TTL = 60 * 1000; // 1 minute
 const POLL_MS = 60 * 1000;
+// Cap the stale-fallback so that revisiting after several days
+// doesn't render a frozen list. After this window we'd rather show
+// nothing (or whatever the showcase blob has) than ancient cache.
+const STALE_FALLBACK_MAX_MS = 30 * 60 * 1000; // 30 minutes
 const CACHE_KEY = "lyra:recently-played";
 
 export default function RecentlyPlayed() {
@@ -42,7 +46,7 @@ export default function RecentlyPlayed() {
     const initialFresh = readFreshCache<Item[]>(CACHE_KEY, CACHE_TTL);
     if (initialFresh) setItems(initialFresh);
     else {
-      const stale = readStaleCache<Item[]>(CACHE_KEY);
+      const stale = readStaleCache<Item[]>(CACHE_KEY, STALE_FALLBACK_MAX_MS);
       if (stale) setItems(stale);
     }
 
@@ -56,7 +60,7 @@ export default function RecentlyPlayed() {
     // can fall back to a cached list. Read fresh inside `load` so each
     // poll tick uses an up-to-date view of localStorage.
     function currentStale(): Item[] | null {
-      return readStaleCache<Item[]>(CACHE_KEY);
+      return readStaleCache<Item[]>(CACHE_KEY, STALE_FALLBACK_MAX_MS);
     }
 
     async function load() {

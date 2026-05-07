@@ -59,15 +59,30 @@ export async function GET() {
     if (data) {
       return Response.json(shape(data as Raw, "personal", true));
     }
-    // Authed but Spotify failed. Return empty + rateLimited:true.
-    // The client caches the user's last-good response in localStorage
-    // and renders that during the throttle window — never serves
-    // someone else's data to a logged-in user.
+    // Authed but Spotify failed (expired token, transient 5xx, or
+    // hit the per-token rate limit). Previously this returned
+    // {items: [], rateLimited: true} unconditionally, which left the
+    // client showing whatever was last in localStorage — even if
+    // that snapshot was days old. The user-visible bug was "clearing
+    // cookies makes it refresh," because the unauthed path falls
+    // through to the cron-refreshed showcase blob below. Make the
+    // authed-failure path do the same fallback so a stale token
+    // doesn't pin a stale list. The showcase blob is still the
+    // owner's own data, so there's no privacy concern.
     const stillAuthed = await hasAuthSession();
     if (stillAuthed) {
       const store = await cookies();
       const refresh = store.get(REFRESH_COOKIE)?.value ?? "";
       const rateLimited = !!refresh && isRateLimitedFor(refresh);
+      const baked = await readOwnerRecentlyFresh();
+      if (baked && baked.items.length > 0) {
+        return Response.json({
+          authenticated: true,
+          source: "showcase-fallback",
+          items: baked.items,
+          rateLimited,
+        });
+      }
       return Response.json({
         authenticated: true,
         source: "personal",

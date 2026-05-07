@@ -11,6 +11,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { after } from "next/server";
 import { spotifyShowcaseFetch } from "./spotify-showcase";
 
 export const OWNER_RECENTLY_VERSION = 1;
@@ -102,12 +103,11 @@ export async function writeOwnerRecently(snap: OwnerRecentlyBlob): Promise<{
   return { mode: "local", path: LOCAL_PATH };
 }
 
-// Default stale-while-revalidate window for visitor reads. Five
-// minutes is short enough that the showcase recently-played list
-// visibly updates while a visitor is on the page, and long enough
-// that bursty traffic doesn't stampede Spotify (the inflight promise
-// below dedupes concurrent refreshes regardless).
-export const SWR_STALE_AFTER_MS = 5 * 60 * 1000;
+// Default stale-while-revalidate window for visitor reads. Two
+// minutes keeps the showcase recently-played list visibly fresh
+// during a visitor session without stampeding Spotify — the inflight
+// promise below dedupes concurrent refreshes regardless.
+export const SWR_STALE_AFTER_MS = 2 * 60 * 1000;
 
 // Module-scope inflight promise so concurrent visitors who all see a
 // stale Blob share a single Spotify refresh call. Cleared in the
@@ -162,6 +162,13 @@ export async function refreshOwnerRecentlyFromSpotify(): Promise<boolean> {
 // older than maxAgeMs. Concurrent callers share one inflight refresh.
 // Best-effort — if the refresh fails (rate-limit, token dead), we
 // return whatever's currently in Blob.
+//
+// Critical: the background refresh is registered with Next's
+// `after()` so Vercel keeps the function instance alive until the
+// promise resolves. Without it, the response was sent first and the
+// instance terminated before the Blob write landed — every visit
+// kicked off a refresh that never finished, which is why the user
+// kept seeing days-old data even though SWR was supposedly running.
 export async function readOwnerRecentlyFresh(
   maxAgeMs: number = SWR_STALE_AFTER_MS,
 ): Promise<OwnerRecentlyBlob | null> {
@@ -176,12 +183,25 @@ export async function readOwnerRecentlyFresh(
       .finally(() => {
         inflightRefresh = null;
       });
+    // Pin the refresh to the request lifecycle. after() is a no-op
+    // outside a request scope (e.g. when called from the cron path),
+    // which is why we wrap in try/catch — the cron already awaits
+    // the refresh directly so it doesn't need after().
+    try {
+      after(inflightRefresh);
+    } catch {
+      // Not in a request scope; the inflight promise still runs but
+      // may be killed if the function terminates first. Cron path
+      // calls refreshOwnerRecentlyFromSpotify() directly to bypass.
+    }
   }
-  // Wait for the refresh, but don't pin the response indefinitely if
-  // Spotify is slow — fall back to the stale Blob after 2.5s.
+  // Wait for the refresh up to 5s so the same-visit response can
+  // include fresh data when Spotify is responsive. If Spotify's slow
+  // we fall back to the stale Blob — the after() handle above keeps
+  // the refresh going so the next visit sees the new data.
   await Promise.race([
     inflightRefresh,
-    new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+    new Promise<void>((resolve) => setTimeout(resolve, 5000)),
   ]);
   return readOwnerRecently();
 }

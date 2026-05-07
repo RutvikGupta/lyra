@@ -27,14 +27,27 @@ export function readFreshCache<T>(key: string, maxAgeMs: number): T | null {
   }
 }
 
-// Read the cached value regardless of age. Used to prefer stale data
-// over an empty render when the API is currently rate-limited.
-export function readStaleCache<T>(key: string): T | null {
+// Read the cached value when it's older than the fresh TTL but still
+// recent enough to be worth showing during a transient API failure.
+// Pass `maxAgeMs` to bound how stale you'll accept — without it,
+// localStorage entries from days-or-weeks-old visits keep rendering
+// indefinitely, which is what made the recently-played list feel
+// frozen until cookies were cleared.
+export function readStaleCache<T>(
+  key: string,
+  maxAgeMs: number = Infinity,
+): T | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const entry = JSON.parse(raw) as CacheEntry<T>;
+    if (
+      maxAgeMs !== Infinity &&
+      Date.now() - entry.storedAt > maxAgeMs
+    ) {
+      return null;
+    }
     return entry.data;
   } catch {
     return null;
